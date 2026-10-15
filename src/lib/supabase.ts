@@ -27,3 +27,14 @@ export const STORAGE_BUCKETS = {
   VIDEOS: 'videos',
   THUMBNAILS: 'thumbnails',
 } as const
+
+export async function createSignedUploadUrl(bucket: string, path: string, expiresIn = 3600) {
+  const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path)
+  if (error) throw new Error(error.message)
+  return data.signedUrl
+}
+
+export async function getPublicUrl(bucket: string, path: string) {
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+  return data.publicUrl
+}

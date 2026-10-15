@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -8,6 +8,8 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
 import { Upload, X, CheckCircle, AlertCircle, Loader2, FileVideo, Image as ImageIcon } from 'lucide-react'
 import { siteConfig, type AllowedVideoType, type AllowedThumbnailType } from '@/config/site'
+import { supabase, createSignedUploadUrl, getPublicUrl } from '@/lib/supabase'
+import { generateId } from '@/lib/utils'
 
 interface UploadPageProps {}
 
@@ -17,13 +19,16 @@ export default function UploadPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [videoProgress, setVideoProgress] = useState(0)
+  const [thumbProgress, setThumbProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const thumbInputRef = useRef<HTMLInputElement>(null)
+  const videoXhrRef = useRef<XMLHttpRequest | null>(null)
+  const thumbXhrRef = useRef<XMLHttpRequest | null>(null)
 
   const validateVideo = useCallback((file: File): boolean => {
     if (!siteConfig.video.allowedTypes.includes(file.type as AllowedVideoType)) {
@@ -90,10 +95,59 @@ export default function UploadPage() {
     if (thumbInputRef.current) thumbInputRef.current.value = ''
   }
 
+  const cancelUploads = () => {
+    videoXhrRef.current?.abort()
+    thumbXhrRef.current?.abort()
+  }
+
+  const uploadToSupabase = async (
+    file: File,
+    bucket: string,
+    path: string,
+    onProgress: (percent: number) => void
+  ): Promise<string> => {
+    const signedUrl = await createSignedUploadUrl(bucket, path)
+    
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      
+      if (bucket === 'videos') {
+        videoXhrRef.current = xhr
+      } else {
+        thumbXhrRef.current = xhr
+      }
+
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100)
+          onProgress(percent)
+        }
+      })
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const publicUrl = getPublicUrl(bucket, path)
+          resolve(publicUrl)
+        } else {
+          reject(new Error(`Upload failed with status ${xhr.status}`))
+        }
+      })
+
+      xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
+      xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
+
+      xhr.open('PUT', signedUrl)
+      xhr.setRequestHeader('Content-Type', file.type)
+      xhr.send(file)
+    })
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setSuccess(false)
+    setVideoProgress(0)
+    setThumbProgress(0)
 
     if (!title.trim()) {
       setError('Please enter a title')
@@ -106,26 +160,56 @@ export default function UploadPage() {
     }
 
     setIsUploading(true)
-    setProgress(0)
 
     try {
-      const formData = new FormData()
-      formData.append('title', title)
-      formData.append('description', description)
-      formData.append('video', videoFile)
-      if (thumbnailFile) {
-        formData.append('thumbnail', thumbnailFile)
+      const videoId = generateId()
+      const videoExt = videoFile.name.split('.').pop()?.toLowerCase() || 'mp4'
+      const videoPath = `${videoId}.${videoExt}`
+
+      const videoUrlResult = await uploadToSupabase(
+        videoFile,
+        'videos',
+        videoPath,
+        setVideoProgress
+      )
+
+      let thumbnailUrl: string | null = null
+      let thumbnailPath: string | null = null
+
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        const thumbExt = thumbnailFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+        thumbnailPath = `${videoId}.${thumbExt}`
+        
+        thumbnailUrl = await uploadToSupabase(
+          thumbnailFile,
+          'thumbnails',
+          thumbnailPath,
+          setThumbProgress
+        )
       }
+
+      const duration = await getVideoDuration(videoFile)
 
       const response = await fetch('/api/upload', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description: description || null,
+          thumbnail_url: thumbnailUrl,
+          video_url: videoUrlResult,
+          duration,
+          file_size: videoFile.size,
+          mime_type: videoFile.type,
+          storage_path: videoPath,
+          thumbnail_path: thumbnailPath,
+        }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Upload failed')
+        throw new Error(data.error || 'Failed to save video metadata')
       }
 
       setSuccess(true)
@@ -137,12 +221,25 @@ export default function UploadPage() {
       if (fileInputRef.current) fileInputRef.current.value = ''
       if (thumbInputRef.current) thumbInputRef.current.value = ''
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.')
+      if (err instanceof Error && err.message === 'Upload cancelled') {
+        setError('Upload cancelled')
+      } else {
+        setError(err instanceof Error ? err.message : 'Upload failed. Please try again.')
+      }
     } finally {
       setIsUploading(false)
-      setProgress(0)
+      setVideoProgress(0)
+      setThumbProgress(0)
+      videoXhrRef.current = null
+      thumbXhrRef.current = null
     }
   }
+
+  useEffect(() => {
+    return () => {
+      cancelUploads()
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-950">
@@ -170,7 +267,7 @@ export default function UploadPage() {
           <Card className="bg-gray-900/50 border-gray-800">
             <CardHeader>
               <CardTitle>Video File</CardTitle>
-              <CardDescription>MP4, WebM, MOV up to 2GB</CardDescription>
+              <CardDescription>MP4, WebM, MOV up to 2GB (direct upload to Supabase)</CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
               <div className="relative">
@@ -206,10 +303,25 @@ export default function UploadPage() {
                           size="icon"
                           onClick={removeVideo}
                           className="text-gray-400 hover:text-red-400"
+                          disabled={isUploading}
                         >
                           <X className="h-5 w-5" />
                         </Button>
                       </div>
+                      {isUploading && videoProgress > 0 && (
+                        <div className="w-full">
+                          <div className="flex justify-between text-sm mb-1">
+                            <span>Video Upload</span>
+                            <span>{videoProgress}%</span>
+                          </div>
+                          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 transition-all duration-300"
+                              style={{ width: `${videoProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-center">
@@ -268,10 +380,25 @@ export default function UploadPage() {
                           size="icon"
                           onClick={removeThumbnail}
                           className="text-gray-400 hover:text-red-400"
+                          disabled={isUploading}
                         >
                           <X className="h-5 w-5" />
                         </Button>
                       </div>
+                      {isUploading && thumbProgress > 0 && (
+                        <div className="w-full">
+                          <div className="flex justify-between text-sm mb-1">
+                            <span>Thumbnail Upload</span>
+                            <span>{thumbProgress}%</span>
+                          </div>
+                          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 transition-all duration-300"
+                              style={{ width: `${thumbProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-center">
@@ -328,7 +455,7 @@ export default function UploadPage() {
               {isUploading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                  Uploading... {progress > 0 && `${progress}%`}
+                  Uploading...
                 </>
               ) : (
                 <>
@@ -340,7 +467,10 @@ export default function UploadPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => window.location.href = '/'}
+              onClick={() => {
+                cancelUploads()
+                window.location.href = '/'
+              }}
               disabled={isUploading}
               className="py-3"
               size="lg"
@@ -352,4 +482,20 @@ export default function UploadPage() {
       </div>
     </div>
   )
+}
+
+function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(video.src)
+      resolve(video.duration)
+    }
+    video.onerror = () => {
+      URL.revokeObjectURL(video.src)
+      resolve(0)
+    }
+    video.src = URL.createObjectURL(file)
+  })
 }
