@@ -2,6 +2,16 @@ import { NextResponse } from 'next/server'
 import { verifyAdminSession } from '@/lib/adminAuth'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+export const DEFAULT_PAID_EMOJIS = [
+  { emoji: '❤️', cost: 5 },
+  { emoji: '🔥', cost: 10 },
+  { emoji: '👏', cost: 15 },
+  { emoji: '🎉', cost: 25 },
+  { emoji: '💎', cost: 50 },
+  { emoji: '🚀', cost: 100 },
+  { emoji: '👑', cost: 500 },
+]
+
 export async function GET(request: Request) {
   const isAdmin = await verifyAdminSession(request)
   if (!isAdmin) {
@@ -23,11 +33,24 @@ export async function GET(request: Request) {
       settingsMap[s.key] = s.value
     }
 
+    let paidEmojis = DEFAULT_PAID_EMOJIS
+    if (settingsMap['paid_chat_emojis']) {
+      try {
+        const parsed = JSON.parse(settingsMap['paid_chat_emojis'])
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          paidEmojis = parsed
+        }
+      } catch {
+        paidEmojis = DEFAULT_PAID_EMOJIS
+      }
+    }
+
     return NextResponse.json({
       settings: {
         signup_coin_bonus: parseInt(settingsMap['signup_coin_bonus'] || '50', 10),
         chat_cost_per_message: parseInt(settingsMap['chat_cost_per_message'] || '2', 10),
         streamer_revenue_percent: parseInt(settingsMap['streamer_revenue_percent'] || '70', 10),
+        paid_chat_emojis: paidEmojis,
       },
       raw: settings || [],
     })
@@ -45,7 +68,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    const { signup_coin_bonus, chat_cost_per_message, streamer_revenue_percent } = body || {}
+    const { signup_coin_bonus, chat_cost_per_message, streamer_revenue_percent, paid_chat_emojis } = body || {}
 
     const supabase = createAdminClient()
     const upserts = []
@@ -78,6 +101,15 @@ export async function POST(request: Request) {
       })
     }
 
+    if (Array.isArray(paid_chat_emojis)) {
+      upserts.push({
+        key: 'paid_chat_emojis',
+        value: JSON.stringify(paid_chat_emojis),
+        description: 'Specific coin costs for live stream chat paid emojis',
+        updated_at: new Date().toISOString(),
+      })
+    }
+
     if (upserts.length > 0) {
       for (const item of upserts) {
         const { error } = await supabase
@@ -89,7 +121,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Platform economics updated successfully',
+      message: 'Platform economics and paid emojis updated successfully',
     })
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Failed to update settings'

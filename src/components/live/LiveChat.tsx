@@ -16,6 +16,8 @@ import {
   X,
   AlertTriangle,
   Coins,
+  Sparkles,
+  Zap,
 } from 'lucide-react'
 
 export interface ChatMessage {
@@ -24,12 +26,19 @@ export interface ChatMessage {
   user_id: string
   message: string
   created_at: string
+  paidEmoji?: string | null
+  coinsPaid?: number | null
   profiles?: {
     id: string
     username: string
     display_name: string | null
     avatar_url: string | null
   } | null
+}
+
+interface PaidEmoji {
+  emoji: string
+  cost: number
 }
 
 interface LiveChatProps {
@@ -41,7 +50,15 @@ interface LiveChatProps {
   onClose?: () => void
 }
 
-const QUICK_EMOJIS = ['❤️', '🔥', '👏', '😂', '🎉', '🙌', '💯', '🚀']
+const DEFAULT_PAID_EMOJIS: PaidEmoji[] = [
+  { emoji: '❤️', cost: 5 },
+  { emoji: '🔥', cost: 10 },
+  { emoji: '👏', cost: 15 },
+  { emoji: '🎉', cost: 25 },
+  { emoji: '💎', cost: 50 },
+  { emoji: '🚀', cost: 100 },
+  { emoji: '👑', cost: 500 },
+]
 
 export function LiveChat({
   streamId,
@@ -57,12 +74,14 @@ export function LiveChat({
   const [isSending, setIsSending] = useState(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [showPaidEmojisTray, setShowPaidEmojisTray] = useState(false)
 
   // Economics & Wallet state
   const [chatCost, setChatCost] = useState<number>(0)
   const [streamerPercent, setStreamerPercent] = useState<number>(70)
   const [userCoins, setUserCoins] = useState<number | null>(null)
   const [userChatEnabled, setUserChatEnabled] = useState<boolean>(true)
+  const [paidEmojis, setPaidEmojis] = useState<PaidEmoji[]>(DEFAULT_PAID_EMOJIS)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -86,6 +105,9 @@ export function LiveChat({
               }
               if (typeof json.economics.userChatEnabled === 'boolean') {
                 setUserChatEnabled(json.economics.userChatEnabled)
+              }
+              if (Array.isArray(json.economics.paidEmojis) && json.economics.paidEmojis.length > 0) {
+                setPaidEmojis(json.economics.paidEmojis)
               }
             }
           }
@@ -169,36 +191,45 @@ export function LiveChat({
     }
   }, [chatError])
 
-  // 3. Send Message Handler
-  const handleSendMessage = async (e?: React.FormEvent) => {
+  // 3. Send Message Handler (Normal Message or with Paid Emoji)
+  const handleSendMessage = async (e?: React.FormEvent, selectedPaidEmoji?: PaidEmoji) => {
     if (e) e.preventDefault()
     setChatError(null)
 
     const cleanText = inputText.trim()
-    if (!cleanText || isSending) return
+    if (!cleanText && !selectedPaidEmoji) return
+    if (isSending || !user) return
 
-    if (!user) return
-
-    // Pre-flight validation
+    // Pre-flight chat permission
     if (!userChatEnabled) {
       setChatError('Your live chat privileges have been disabled by an administrator.')
       return
     }
 
     const currentBalance = userCoins ?? profile?.coin_balance ?? 50
-    if (chatCost > 0 && currentBalance < chatCost) {
-      setChatError(`Insufficient coins! You need ${chatCost} coins to send a message. Your balance is ${currentBalance} coins.`)
+    const requiredCoins = selectedPaidEmoji ? selectedPaidEmoji.cost : chatCost
+
+    if (requiredCoins > 0 && currentBalance < requiredCoins) {
+      setChatError(
+        selectedPaidEmoji
+          ? `Insufficient coins for ${selectedPaidEmoji.emoji}! Requires ${selectedPaidEmoji.cost} coins (Your balance: ${currentBalance}).`
+          : `Insufficient coins! Requires ${chatCost} coins to chat (Your balance: ${currentBalance}).`
+      )
       return
     }
 
     setIsSending(true)
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
 
+    const messageText = cleanText || (selectedPaidEmoji ? `${selectedPaidEmoji.emoji}` : '')
+
     const optimisticMessage: ChatMessage = {
       id: tempId,
       stream_id: streamId,
       user_id: user.id,
-      message: cleanText,
+      message: messageText,
+      paidEmoji: selectedPaidEmoji?.emoji || null,
+      coinsPaid: requiredCoins > 0 ? requiredCoins : null,
       created_at: new Date().toISOString(),
       profiles: {
         id: user.id,
@@ -212,6 +243,7 @@ export function LiveChat({
     setMessages((prev) => [...prev, optimisticMessage])
     setInputText('')
     setIsScrolledUp(false)
+    setShowPaidEmojisTray(false)
 
     // Broadcast instantly to all connected viewers over LiveKit DataChannel
     if (room && room.localParticipant) {
@@ -235,7 +267,9 @@ export function LiveChat({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           streamId,
-          message: cleanText,
+          message: cleanText || undefined,
+          paidEmoji: selectedPaidEmoji?.emoji || undefined,
+          emojiCost: selectedPaidEmoji?.cost || undefined,
         }),
       })
 
@@ -245,7 +279,7 @@ export function LiveChat({
         if (json.message) {
           // Replace optimistic ID with persistent ID
           setMessages((prev) =>
-            prev.map((m) => (m.id === tempId ? json.message : m))
+            prev.map((m) => (m.id === tempId ? { ...json.message, paidEmoji: selectedPaidEmoji?.emoji, coinsPaid: requiredCoins } : m))
           )
         }
         if (json.remainingCoins !== undefined) {
@@ -265,10 +299,6 @@ export function LiveChat({
     } finally {
       setIsSending(false)
     }
-  }
-
-  const handleAddEmoji = (emoji: string) => {
-    setInputText((prev) => `${prev} ${emoji} `.trim())
   }
 
   const formatChatTime = (isoString: string) => {
@@ -299,14 +329,14 @@ export function LiveChat({
           {/* Active Coin Economics Pill */}
           {chatCost > 0 ? (
             <div
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold"
-              title={`${chatCost} coins deducted per chat message. ${streamerPercent}% allocated to streamer.`}
+              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold"
+              title={`${chatCost} coins deducted per chat. ${streamerPercent}% to streamer.`}
             >
               <span>🪙</span>
               <span>{chatCost} / msg</span>
             </div>
           ) : (
-            <span className="text-[10px] font-semibold text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <span className="text-[10px] font-semibold text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
               Free Chat
             </span>
           )}
@@ -332,7 +362,7 @@ export function LiveChat({
           <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-center py-12 space-y-2">
             <MessageSquare className="h-8 w-8 text-zinc-700 stroke-1" />
             <p className="text-xs">Welcome to live chat!</p>
-            <p className="text-[11px] text-zinc-600">Messages will appear here in real time.</p>
+            <p className="text-[11px] text-zinc-600">Messages & Super Emojis will appear here in real time.</p>
           </div>
         ) : (
           messages.map((msg) => {
@@ -340,7 +370,64 @@ export function LiveChat({
             const displayName =
               msg.profiles?.display_name || msg.profiles?.username || 'Viewer'
             const avatarUrl = msg.profiles?.avatar_url
+            const isPaidSuperEmoji = Boolean(msg.paidEmoji || (msg.coinsPaid && msg.coinsPaid > 0))
 
+            // RENDER PAID SUPER EMOJI (YOUTUBE SUPER CHAT STYLE)
+            if (isPaidSuperEmoji) {
+              return (
+                <div
+                  key={msg.id}
+                  className="pt-2.5 first:pt-0"
+                >
+                  <div className="rounded-xl overflow-hidden border border-amber-500/40 bg-gradient-to-br from-amber-500/20 via-zinc-900/90 to-zinc-900 shadow-lg shadow-amber-500/10 animate-scale-up">
+                    {/* Super Sticker Header Bar */}
+                    <div className="px-3 py-1.5 bg-amber-500/25 border-b border-amber-500/30 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-amber-300 font-extrabold text-[10px] tracking-wider uppercase">
+                        <Sparkles className="h-3 w-3 text-amber-400" />
+                        <span>SUPER EMOJI • {msg.coinsPaid ?? 5} COINS</span>
+                      </div>
+                      <span className="text-[10px] text-amber-300/70 font-mono">
+                        {formatChatTime(msg.created_at)}
+                      </span>
+                    </div>
+
+                    {/* Super Sticker Content Body */}
+                    <div className="p-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt={displayName}
+                            className="w-7 h-7 rounded-full object-cover shrink-0 ring-2 ring-amber-500/40"
+                          />
+                        ) : (
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-[#9c27b0] to-[#e91e63] flex items-center justify-center text-white text-xs font-bold uppercase shrink-0 ring-2 ring-amber-500/40">
+                            {displayName.charAt(0)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <span className="font-bold text-white text-xs block truncate">
+                            {displayName}
+                          </span>
+                          {msg.message && msg.message !== msg.paidEmoji && (
+                            <p className="text-zinc-200 text-xs mt-0.5 break-words">
+                              {msg.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Prominent Paid Emoji Sticker */}
+                      <span className="text-3xl sm:text-4xl filter drop-shadow-md shrink-0 select-none animate-pulse">
+                        {msg.paidEmoji || '⭐'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            }
+
+            // STANDARD LIVE CHAT MESSAGE
             return (
               <div
                 key={msg.id}
@@ -424,19 +511,44 @@ export function LiveChat({
         </div>
       )}
 
-      {/* Quick Emojis Shelf */}
-      {user && userChatEnabled && !isBalanceInsufficient && (
-        <div className="px-3 py-1.5 bg-[#181818]/60 border-t border-[#272727] flex items-center gap-1 overflow-x-auto no-scrollbar">
-          {QUICK_EMOJIS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              onClick={() => handleAddEmoji(emoji)}
-              className="w-7 h-7 flex items-center justify-center hover:bg-white/10 rounded-lg text-sm transition-transform active:scale-125"
-            >
-              {emoji}
-            </button>
-          ))}
+      {/* PAID SUPER EMOJIS TRAY (ALLOCATED BY ADMIN PANEL) */}
+      {user && userChatEnabled && showPaidEmojisTray && (
+        <div className="p-3 bg-[#161616] border-t border-amber-500/30 space-y-2 animate-slide-up">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Super Emojis (Paid Reaction Stickers)</span>
+            </span>
+            <span className="text-[10px] text-zinc-400">
+              Streamer receives {streamerPercent}%
+            </span>
+          </div>
+
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+            {paidEmojis.map((item) => {
+              const canAfford = currentBalance >= item.cost
+              return (
+                <button
+                  key={item.emoji}
+                  type="button"
+                  onClick={() => handleSendMessage(undefined, item)}
+                  disabled={!canAfford || isSending}
+                  className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${
+                    canAfford
+                      ? 'bg-[#1f1f1f] hover:bg-[#282828] border-zinc-700 hover:border-amber-500/50 hover:scale-105 active:scale-95'
+                      : 'bg-zinc-900/60 border-zinc-800 opacity-40 cursor-not-allowed'
+                  }`}
+                  title={`${item.emoji} costs ${item.cost} coins`}
+                >
+                  <span className="text-2xl select-none mb-1">{item.emoji}</span>
+                  <span className="text-[10px] font-bold text-amber-400 flex items-center gap-0.5">
+                    <span>🪙</span>
+                    <span>{item.cost}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -450,8 +562,22 @@ export function LiveChat({
               <span>Your live chat privileges have been disabled by an administrator.</span>
             </div>
           ) : (
-            <form onSubmit={handleSendMessage} className="space-y-2">
+            <form onSubmit={(e) => handleSendMessage(e)} className="space-y-2">
               <div className="flex items-center gap-2">
+                {/* Toggle Paid Super Emojis Shelf Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowPaidEmojisTray(!showPaidEmojisTray)}
+                  className={`p-2 rounded-full border transition-colors shrink-0 ${
+                    showPaidEmojisTray
+                      ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
+                      : 'bg-[#141414] hover:bg-[#242424] text-amber-400 border-[#303030]'
+                  }`}
+                  title="Send Paid Super Emoji (Specific Emoji = Specific Coin cost)"
+                >
+                  <Sparkles className="h-4 w-4" />
+                </button>
+
                 <input
                   type="text"
                   maxLength={300}
@@ -459,7 +585,7 @@ export function LiveChat({
                   placeholder={
                     isBalanceInsufficient
                       ? `Insufficient coins (${currentBalance}/${chatCost} coins needed)`
-                      : 'Send a message...'
+                      : 'Send a message or Super Emoji...'
                   }
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}

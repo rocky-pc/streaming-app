@@ -12,7 +12,13 @@ export function Footer() {
     setYear(new Date().getFullYear())
   }, [])
 
-  if (pathname && (pathname.startsWith('/video/') || pathname.startsWith('/live/') || pathname === '/go-live')) {
+  if (
+    pathname &&
+    (pathname.startsWith('/video/') ||
+      pathname.startsWith('/live/') ||
+      pathname === '/go-live' ||
+      pathname.startsWith('/admin'))
+  ) {
     return null
   }
 

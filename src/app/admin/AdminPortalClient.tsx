@@ -78,10 +78,26 @@ interface AdminUser {
   streamCount?: number
 }
 
+export interface PaidEmojiItem {
+  emoji: string
+  cost: number
+}
+
+export const DEFAULT_PAID_EMOJIS: PaidEmojiItem[] = [
+  { emoji: '❤️', cost: 5 },
+  { emoji: '🔥', cost: 10 },
+  { emoji: '👏', cost: 15 },
+  { emoji: '🎉', cost: 25 },
+  { emoji: '💎', cost: 50 },
+  { emoji: '🚀', cost: 100 },
+  { emoji: '👑', cost: 500 },
+]
+
 interface PlatformEconomics {
   signup_coin_bonus: number
   chat_cost_per_message: number
   streamer_revenue_percent: number
+  paid_chat_emojis?: PaidEmojiItem[]
 }
 
 interface AdminStream {
@@ -153,10 +169,6 @@ export default function AdminPortalClient() {
   const [showPassword, setShowPassword] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
   const [isSubmittingAuth, setIsSubmittingAuth] = useState(false)
-  const [commonCredentials, setCommonCredentials] = useState<{ username: string; password: string }>({
-    username: 'admin',
-    password: 'admin123',
-  })
 
   // Dashboard Data State
   const [activeTab, setActiveTab] = useState<TabType>('overview')
@@ -170,6 +182,7 @@ export default function AdminPortalClient() {
     signup_coin_bonus: 50,
     chat_cost_per_message: 2,
     streamer_revenue_percent: 70,
+    paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
 
   const [isLoadingData, setIsLoadingData] = useState(false)
@@ -205,8 +218,13 @@ export default function AdminPortalClient() {
     signup_coin_bonus: 50,
     chat_cost_per_message: 2,
     streamer_revenue_percent: 70,
+    paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
   const [isSavingSettings, setIsSavingSettings] = useState(false)
+
+  // Paid Chat Emoji Manager State
+  const [newEmojiInput, setNewEmojiInput] = useState('')
+  const [newEmojiCost, setNewEmojiCost] = useState<number>(20)
 
   // Check auth status on mount
   useEffect(() => {
@@ -214,9 +232,6 @@ export default function AdminPortalClient() {
       try {
         const res = await fetch('/api/admin/auth')
         const data = await res.json()
-        if (data.commonCredentials) {
-          setCommonCredentials(data.commonCredentials)
-        }
         setIsAuthenticated(Boolean(data.authenticated))
       } catch {
         setIsAuthenticated(false)
@@ -300,8 +315,18 @@ export default function AdminPortalClient() {
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json()
         if (settingsData.settings) {
-          setEconomics(settingsData.settings)
-          setSettingsForm(settingsData.settings)
+          const loaded: PlatformEconomics = {
+            signup_coin_bonus: settingsData.settings.signup_coin_bonus ?? 50,
+            chat_cost_per_message: settingsData.settings.chat_cost_per_message ?? 2,
+            streamer_revenue_percent: settingsData.settings.streamer_revenue_percent ?? 70,
+            paid_chat_emojis:
+              Array.isArray(settingsData.settings.paid_chat_emojis) &&
+              settingsData.settings.paid_chat_emojis.length > 0
+                ? settingsData.settings.paid_chat_emojis
+                : DEFAULT_PAID_EMOJIS,
+          }
+          setEconomics(loaded)
+          setSettingsForm(loaded)
         }
       }
 
@@ -421,7 +446,7 @@ export default function AdminPortalClient() {
       const data = await res.json()
       if (res.ok) {
         setEconomics(settingsForm)
-        setActionNotice({ type: 'success', message: 'Platform economics updated successfully!' })
+        setActionNotice({ type: 'success', message: 'Platform economics and paid emojis updated successfully!' })
       } else {
         setActionNotice({ type: 'error', message: data.error || 'Failed to save economics' })
       }
@@ -430,6 +455,69 @@ export default function AdminPortalClient() {
     } finally {
       setIsSavingSettings(false)
     }
+  }
+
+  // -------------------------------------------------------------
+  // PAID EMOJIS (SUPER STICKERS) MANAGEMENT HANDLERS
+  // -------------------------------------------------------------
+  const handleUpdateEmojiCost = (emojiChar: string, newCost: number) => {
+    const cost = Math.max(1, Math.min(100000, newCost || 1))
+    setSettingsForm((prev) => ({
+      ...prev,
+      paid_chat_emojis: (prev.paid_chat_emojis || DEFAULT_PAID_EMOJIS).map((item) =>
+        item.emoji === emojiChar ? { ...item, cost } : item
+      ),
+    }))
+  }
+
+  const handleDeleteEmoji = (emojiChar: string) => {
+    setSettingsForm((prev) => {
+      const current = prev.paid_chat_emojis || DEFAULT_PAID_EMOJIS
+      if (current.length <= 1) {
+        setActionNotice({ type: 'error', message: 'You must keep at least 1 paid emoji configured.' })
+        return prev
+      }
+      return {
+        ...prev,
+        paid_chat_emojis: current.filter((item) => item.emoji !== emojiChar),
+      }
+    })
+  }
+
+  const handleAddEmoji = (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const trimmed = newEmojiInput.trim()
+    if (!trimmed) {
+      setActionNotice({ type: 'error', message: 'Please select or enter an emoji.' })
+      return
+    }
+    const cost = Math.max(1, Math.min(100000, Number(newEmojiCost) || 1))
+
+    setSettingsForm((prev) => {
+      const current = prev.paid_chat_emojis || DEFAULT_PAID_EMOJIS
+      const existing = current.find((x) => x.emoji === trimmed)
+      if (existing) {
+        return {
+          ...prev,
+          paid_chat_emojis: current.map((x) => (x.emoji === trimmed ? { ...x, cost } : x)),
+        }
+      }
+      return {
+        ...prev,
+        paid_chat_emojis: [...current, { emoji: trimmed, cost }],
+      }
+    })
+    setActionNotice({ type: 'success', message: `Added paid emoji ${trimmed} at ${cost} coins!` })
+    setNewEmojiInput('')
+    setNewEmojiCost(20)
+  }
+
+  const handleResetEmojis = () => {
+    setSettingsForm((prev) => ({
+      ...prev,
+      paid_chat_emojis: DEFAULT_PAID_EMOJIS,
+    }))
+    setActionNotice({ type: 'success', message: 'Reset emojis to standard platform defaults' })
   }
 
   // Stream Actions
@@ -652,112 +740,81 @@ export default function AdminPortalClient() {
   // -------------------------------------------------------------
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">
-        {/* Ambient background glow */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-10 right-10 w-72 h-72 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="min-h-screen bg-[#070707] text-zinc-100 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden select-none">
+        {/* Subtle Ambient Background Gradients */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] bg-red-600/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-10 right-10 w-80 h-80 bg-zinc-800/20 rounded-full blur-[100px] pointer-events-none" />
 
         <div className="w-full max-w-md relative z-10 space-y-6">
           {/* Header Brand */}
           <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl mb-2">
-              <Shield className="h-8 w-8 text-red-500" />
+            <div className="inline-flex items-center justify-center p-3.5 rounded-2xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-zinc-700/80 shadow-2xl mb-1">
+              <Shield className="h-9 w-9 text-red-500" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">StreamFlow Admin Portal</h1>
+            <div className="inline-block px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-[11px] font-semibold text-red-400 tracking-wider uppercase mb-1">
+              Restricted Access Console
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-white">StreamFlow Admin Portal</h1>
             <p className="text-xs text-zinc-400">
-              Next.js Vercel Serverless Architecture • Full Stream Flow & Upload Control
+              Enterprise Control Hub • Stream Infrastructure & Policy Management
             </p>
           </div>
 
-          {/* Common Admin Credentials Display Card (Requested Feature) */}
-          <div className="bg-zinc-900/90 border border-red-500/30 rounded-2xl p-5 shadow-2xl backdrop-blur-md relative overflow-hidden">
-            <div className="absolute -top-10 -right-10 w-24 h-24 bg-red-500/20 rounded-full blur-xl pointer-events-none" />
-
-            <div className="flex items-center gap-2 mb-3">
-              <Key className="h-4 w-4 text-red-400" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-red-400">
-                Common Admin Credentials
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 text-xs mb-4">
-              <div className="bg-black/40 border border-zinc-800 rounded-xl p-2.5">
-                <span className="text-zinc-500 block mb-0.5">Username</span>
-                <span className="font-mono font-semibold text-white select-all text-sm">
-                  {commonCredentials.username}
-                </span>
-              </div>
-              <div className="bg-black/40 border border-zinc-800 rounded-xl p-2.5">
-                <span className="text-zinc-500 block mb-0.5">Password</span>
-                <span className="font-mono font-semibold text-white select-all text-sm">
-                  {commonCredentials.password}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setUsernameInput(commonCredentials.username)
-                  setPasswordInput(commonCredentials.password)
-                }}
-                className="flex-1 py-2 px-3 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl transition-colors border border-zinc-700"
-              >
-                Fill Credentials
-              </button>
-
-              <button
-                type="button"
-                disabled={isSubmittingAuth}
-                onClick={() => handleLogin(undefined, commonCredentials.username, commonCredentials.password)}
-                className="flex-1 py-2 px-3 text-xs font-bold bg-red-600 hover:bg-red-500 text-white rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center justify-center gap-1.5"
-              >
-                <Zap className="h-3.5 w-3.5 fill-current" />
-                <span>1-Click Auto Login</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Manual Login Form */}
+          {/* Authentic Admin Login Form */}
           <form
             onSubmit={(e) => handleLogin(e)}
-            className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-6 shadow-xl space-y-4"
+            className="bg-[#121212]/90 border border-[#2a2a2a] rounded-2xl p-7 shadow-2xl backdrop-blur-xl space-y-5"
           >
             {authError && (
-              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>{authError}</span>
+              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400 text-xs flex items-center gap-2.5 animate-shake">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                <span className="font-medium">{authError}</span>
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1.5">Admin Username</label>
-              <input
-                type="text"
-                required
-                value={usernameInput}
-                onChange={(e) => setUsernameInput(e.target.value)}
-                placeholder="Enter admin username"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-red-500 transition-colors"
-              />
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-zinc-300">
+                Administrator Username
+              </label>
+              <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500">
+                  <Shield className="h-4 w-4" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  autoComplete="username"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  placeholder="Enter administrator username"
+                  className="w-full bg-[#181818] border border-[#2e2e2e] focus:border-red-500 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none transition-colors"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1.5">Admin Password</label>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-zinc-300">
+                Security Password
+              </label>
               <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500">
+                  <Lock className="h-4 w-4" />
+                </div>
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="current-password"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="Enter admin password"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white pr-10 focus:outline-none focus:border-red-500 transition-colors"
+                  placeholder="Enter administrator password"
+                  className="w-full bg-[#181818] border border-[#2e2e2e] focus:border-red-500 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none transition-colors"
                 />
                 <button
                   type="button"
+                  tabIndex={-1}
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -766,13 +823,13 @@ export default function AdminPortalClient() {
 
             <button
               type="submit"
-              disabled={isSubmittingAuth}
-              className="w-full py-2.5 px-4 bg-zinc-100 hover:bg-white text-zinc-900 font-semibold rounded-xl text-sm transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+              disabled={isSubmittingAuth || !usernameInput.trim() || !passwordInput}
+              className="w-full py-3 px-4 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-red-600/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isSubmittingAuth ? (
                 <>
                   <RefreshCw className="h-4 w-4 animate-spin" />
-                  <span>Authenticating...</span>
+                  <span>Verifying Credentials...</span>
                 </>
               ) : (
                 <>
@@ -782,12 +839,20 @@ export default function AdminPortalClient() {
               )}
             </button>
 
-            <div className="pt-2 text-center">
-              <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                ← Return to StreamFlow Public Website
+            <div className="pt-2 text-center border-t border-[#222]">
+              <Link
+                href="/"
+                className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
+              >
+                <span>← Return to StreamFlow Main Site</span>
               </Link>
             </div>
           </form>
+
+          {/* Security Notice */}
+          <div className="text-center text-[11px] text-zinc-400 max-w-xs mx-auto leading-relaxed">
+            Authorized personnel only. All administrative activities and IP addresses are monitored and logged.
+          </div>
         </div>
       </div>
     )
@@ -1926,6 +1991,147 @@ export default function AdminPortalClient() {
                   </span>
                 </div>
               </div>
+
+              {/* ------------------------------------------------------------- */}
+              {/* PAID CHAT EMOJIS (SUPER STICKERS) MANAGER */}
+              {/* ------------------------------------------------------------- */}
+              <div className="pt-6 border-t border-[#272727] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-amber-400" />
+                      <span>Live Stream Paid Chat Emojis (Super Stickers)</span>
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Configure custom coin prices for each interactive emoji in live chat. Broadcasters earn{' '}
+                      <strong className="text-emerald-400">{settingsForm.streamer_revenue_percent}%</strong> of every sticker sent.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleResetEmojis}
+                    className="text-[11px] font-medium text-zinc-400 hover:text-zinc-200 underline self-start sm:self-auto"
+                  >
+                    Reset to Defaults
+                  </button>
+                </div>
+
+                {/* Add New Emoji Row */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-4 space-y-3">
+                  <div className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <Plus className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Add or Update Paid Emoji</span>
+                  </div>
+
+                  {/* Preset quick picks */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-zinc-500 mr-1">Quick Picks:</span>
+                    {['❤️', '🔥', '👏', '🎉', '💎', '🚀', '👑', '⚡', '🌟', '🏆', '💯', '💰', '🦄', '🎯', '🍕', '🎮', '🥳', '😎'].map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setNewEmojiInput(em)}
+                        className={`text-base p-1.5 rounded-lg border transition-transform hover:scale-110 ${
+                          newEmojiInput === em
+                            ? 'bg-amber-500/20 border-amber-500/50'
+                            : 'bg-[#181818] border-[#2e2e2e] hover:border-zinc-500'
+                        }`}
+                        title={`Select ${em}`}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-3 pt-1">
+                    <div className="flex-1 w-full sm:w-auto">
+                      <label className="text-[11px] text-zinc-500 block mb-1">Emoji Character</label>
+                      <input
+                        type="text"
+                        maxLength={4}
+                        placeholder="e.g. ⚡ or 🏆"
+                        value={newEmojiInput}
+                        onChange={(e) => setNewEmojiInput(e.target.value)}
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400 text-center font-emoji"
+                      />
+                    </div>
+
+                    <div className="w-full sm:w-44">
+                      <label className="text-[11px] text-zinc-500 block mb-1">Coin Cost</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="1"
+                          max="100000"
+                          value={newEmojiCost}
+                          onChange={(e) => setNewEmojiCost(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pl-8 focus:outline-none focus:border-amber-400"
+                        />
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+                      </div>
+                    </div>
+
+                    <div className="w-full sm:w-auto pt-5">
+                      <button
+                        type="button"
+                        onClick={handleAddEmoji}
+                        disabled={!newEmojiInput.trim()}
+                        className="w-full sm:w-auto px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white font-semibold text-xs rounded-xl border border-zinc-700 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Add / Update Sticker</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Configured Emojis Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                  {(settingsForm.paid_chat_emojis || DEFAULT_PAID_EMOJIS).map((item) => (
+                    <div
+                      key={item.emoji}
+                      className="bg-[#121212] border border-[#2a2a2a] hover:border-zinc-700 rounded-2xl p-3.5 flex flex-col items-center gap-2 relative group transition-all"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteEmoji(item.emoji)}
+                        title={`Delete ${item.emoji}`}
+                        className="absolute top-2 right-2 p-1 text-zinc-600 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+
+                      <div className="text-3xl pt-1 select-none transform group-hover:scale-110 transition-transform">
+                        {item.emoji}
+                      </div>
+
+                      <div className="w-full space-y-1">
+                        <label className="text-[10px] text-zinc-500 uppercase tracking-wider block text-center font-semibold">
+                          Coins
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="1"
+                            max="100000"
+                            value={item.cost}
+                            onChange={(e) =>
+                              handleUpdateEmojiCost(item.emoji, parseInt(e.target.value, 10) || 1)
+                            }
+                            className="w-full bg-[#181818] border border-[#333] focus:border-amber-400 rounded-xl py-1 px-2 pl-6 text-xs font-bold text-amber-300 text-center focus:outline-none"
+                          />
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px]">🪙</span>
+                        </div>
+                      </div>
+
+                      <div className="text-[10px] text-zinc-500 font-mono">
+                        Broadcaster: +{Math.floor(item.cost * (settingsForm.streamer_revenue_percent / 100))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </form>
 
             {/* Serverless Infrastructure Config */}
@@ -1938,16 +2144,22 @@ export default function AdminPortalClient() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl bg-[#121212] border border-[#2c2c2c] space-y-3">
                   <span className="text-xs font-bold text-red-400 uppercase tracking-wider block">
-                    Admin Portal Credentials
+                    Admin Portal Authentication
                   </span>
                   <div className="space-y-2 text-xs">
                     <div className="flex justify-between py-1 border-b border-[#222]">
-                      <span className="text-zinc-500">Configured Username</span>
-                      <span className="font-mono text-white">{commonCredentials.username}</span>
+                      <span className="text-zinc-500">Security Model</span>
+                      <span className="font-semibold text-emerald-400">HTTP-Only Signed Session Token</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-[#222]">
-                      <span className="text-zinc-500">Configured Password</span>
-                      <span className="font-mono text-zinc-400">•••••••••• ({commonCredentials.password})</span>
+                      <span className="text-zinc-500">Credentials Origin</span>
+                      <span className="font-mono text-zinc-300">Environment Variables (Encrypted)</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-[#222]">
+                      <span className="text-zinc-500">Session Status</span>
+                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> Active Authenticated
+                      </span>
                     </div>
                   </div>
                 </div>

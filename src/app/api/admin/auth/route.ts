@@ -8,15 +8,9 @@ import {
 
 export async function GET(request: Request) {
   const isAuthenticated = await verifyAdminSession(request)
-  const credentials = getAdminCredentials()
 
   return NextResponse.json({
     authenticated: isAuthenticated,
-    // Provide common admin credentials so the client portal can display them directly to the user
-    commonCredentials: {
-      username: credentials.username,
-      password: credentials.password,
-    },
   })
 }
 
