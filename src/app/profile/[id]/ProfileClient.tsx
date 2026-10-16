@@ -6,7 +6,6 @@ import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { formatDate } from '@/lib/utils'
 import { VideoGrid } from '@/components/video/VideoGrid'
-import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import {
@@ -15,9 +14,10 @@ import {
   Film,
   Edit3,
   X,
-  Upload,
   Loader2,
-  CheckCircle2,
+  Bell,
+  Play,
+  Upload,
 } from 'lucide-react'
 import type { Profile, Video } from '@/types'
 import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
@@ -33,6 +33,7 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
 
   const [profile, setProfile] = useState<Profile>(initialProfile)
   const [videos] = useState<Video[]>(initialVideos)
+  const [isSubscribed, setIsSubscribed] = useState(false)
 
   // Edit Profile Modal
   const [isEditing, setIsEditing] = useState(false)
@@ -43,6 +44,16 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
   const [isSaving, setIsSaving] = useState(false)
 
   const isOwner = user?.id === profile.id
+
+  const handleSubscribeToggle = () => {
+    setIsSubscribed(!isSubscribed)
+    toast(
+      !isSubscribed
+        ? `Subscribed to ${profile.display_name || profile.username}!`
+        : `Unsubscribed from ${profile.display_name || profile.username}`,
+      'info'
+    )
+  }
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -95,91 +106,100 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
   const name = profile.display_name || profile.username
 
   return (
-    <div className="min-h-screen bg-gray-950 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-6xl mx-auto space-y-10">
-        {/* Profile Card Banner */}
-        <div className="rounded-3xl bg-gradient-to-br from-indigo-950/40 via-gray-900 to-gray-900 border border-gray-800 p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 relative z-10">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
-              {/* Avatar */}
-              <div className="relative">
+    <div className="min-h-screen bg-[#0f0f0f] py-6 px-4 sm:px-6 lg:px-8 select-none">
+      <div className="max-w-6xl mx-auto space-y-8">
+        {/* YouTube Channel Banner & Header */}
+        <div className="rounded-3xl bg-gradient-to-r from-[#1c1c1c] via-[#242424] to-[#1a1a1a] border border-[#272727] p-6 sm:p-8 shadow-xl">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
+              {/* Channel Avatar */}
+              <div className="relative shrink-0">
                 {profile.avatar_url ? (
                   <img
                     src={profile.avatar_url}
                     alt={name}
-                    className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover ring-2 ring-indigo-500 shadow-xl"
+                    className="w-24 h-24 sm:w-32 sm:h-32 rounded-full object-cover ring-2 ring-white/10 shadow-xl"
                   />
                 ) : (
-                  <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-3xl font-extrabold uppercase shadow-xl ring-2 ring-indigo-500/50">
+                  <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-tr from-[#9c27b0] to-[#e91e63] flex items-center justify-center text-white text-3xl sm:text-4xl font-black uppercase shadow-xl ring-2 ring-white/10">
                     {name.charAt(0)}
                   </div>
                 )}
               </div>
 
-              {/* Bio & Details */}
-              <div className="space-y-1.5">
+              {/* Channel Info */}
+              <div className="space-y-1.5 min-w-0">
                 <div className="flex items-center gap-3">
-                  <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">{name}</h1>
-                  {isOwner && (
-                    <span className="text-[11px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 px-2.5 py-0.5 rounded-full">
-                      You
-                    </span>
-                  )}
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-[#f1f1f1] tracking-tight">{name}</h1>
                 </div>
-                <p className="text-sm font-medium text-gray-400">@{profile.username}</p>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#aaaaaa]">
+                  <span className="font-semibold text-zinc-300">@{profile.username}</span>
+                  <span>•</span>
+                  <span>{videos.length} {videos.length === 1 ? 'video' : 'videos'}</span>
+                  <span>•</span>
+                  <span>Joined {formatDate(profile.created_at)}</span>
+                </div>
 
                 {profile.bio && (
-                  <p className="text-sm text-gray-300 max-w-xl whitespace-pre-line pt-1 leading-relaxed">
+                  <p className="text-xs sm:text-sm text-zinc-300 max-w-xl whitespace-pre-line pt-1 leading-relaxed">
                     {profile.bio}
                   </p>
                 )}
-
-                <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400 pt-2">
-                  <span className="flex items-center gap-1.5">
-                    <Calendar className="h-3.5 w-3.5 text-gray-500" />
-                    Joined {formatDate(profile.created_at)}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Film className="h-3.5 w-3.5 text-indigo-400" />
-                    {videos.length} {videos.length === 1 ? 'Video' : 'Videos'}
-                  </span>
-                </div>
               </div>
             </div>
 
-            {/* Owner Actions */}
-            {isOwner && (
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <Button
-                  onClick={() => setIsEditing(true)}
-                  variant="outline"
-                  className="border-gray-700 text-gray-200 hover:text-white hover:bg-gray-800 gap-2 w-full sm:w-auto"
+            {/* Action Buttons: Owner Customize OR Visitor Subscribe */}
+            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+              {isOwner ? (
+                <>
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="px-4 py-2 bg-[#272727] hover:bg-[#383838] text-white text-xs font-semibold rounded-full transition-colors flex items-center gap-1.5"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                    <span>Customize Channel</span>
+                  </button>
+
+                  <Link href="/my-videos">
+                    <button className="px-4 py-2 bg-[#272727] hover:bg-[#383838] text-white text-xs font-semibold rounded-full transition-colors flex items-center gap-1.5">
+                      <Film className="h-3.5 w-3.5" />
+                      <span>Manage Videos</span>
+                    </button>
+                  </Link>
+                </>
+              ) : (
+                <button
+                  onClick={handleSubscribeToggle}
+                  className={`px-5 py-2 text-xs font-semibold rounded-full transition-colors flex items-center gap-1.5 ${
+                    isSubscribed
+                      ? 'bg-[#272727] text-white hover:bg-[#383838]'
+                      : 'bg-white text-black hover:bg-zinc-200'
+                  }`}
                 >
-                  <Edit3 className="h-4 w-4" />
-                  <span>Edit Profile</span>
-                </Button>
-                <Link href="/my-videos" className="hidden sm:block">
-                  <Button className="bg-indigo-600 hover:bg-indigo-500 text-white">
-                    Manage Videos
-                  </Button>
-                </Link>
-              </div>
-            )}
+                  {isSubscribed ? (
+                    <>
+                      <Bell className="h-3.5 w-3.5" />
+                      <span>Subscribed</span>
+                    </>
+                  ) : (
+                    'Subscribe'
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* User's Videos Section */}
-        <div className="space-y-6">
-          <div className="flex items-center justify-between border-b border-gray-800 pb-4">
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <Film className="h-5 w-5 text-indigo-500" />
-              <span>Videos by {name}</span>
-            </h2>
-            <span className="text-xs text-gray-500 font-medium">
-              {videos.length} public upload{videos.length === 1 ? '' : 's'}
-            </span>
+        {/* Channel Navigation Tab */}
+        <div className="border-b border-[#272727] flex items-center gap-8 px-2 text-sm font-semibold text-white">
+          <div className="border-b-2 border-white pb-3 cursor-pointer">
+            Videos
           </div>
+        </div>
 
+        {/* Videos Grid */}
+        <div>
           <VideoGrid
             videos={videos}
             emptyMessage={`${name} has not published any public videos yet.`}
@@ -189,16 +209,16 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
 
       {/* Edit Profile Modal */}
       {isEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-gray-900 border border-gray-800 p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-800">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Edit3 className="h-5 w-5 text-indigo-400" />
-                <span>Edit Profile</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
+          <div className="w-full max-w-lg rounded-2xl bg-[#212121] border border-[#333333] p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar">
+            <div className="flex items-center justify-between pb-3 border-b border-[#333333]">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Edit3 className="h-4 w-4 text-[#ff0000]" />
+                <span>Customize Channel</span>
               </h3>
               <button
                 onClick={() => setIsEditing(false)}
-                className="text-gray-400 hover:text-white"
+                className="text-zinc-400 hover:text-white p-1 rounded-full"
                 aria-label="Close"
               >
                 <X className="h-5 w-5" />
@@ -207,8 +227,8 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
 
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-200 mb-1.5" htmlFor="edit-name">
-                  Display Name
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="edit-name">
+                  Channel Name
                 </label>
                 <Input
                   id="edit-name"
@@ -216,38 +236,38 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
                   required
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="bg-gray-800 border-gray-700 text-white focus:border-indigo-500"
+                  className="bg-[#121212] border-[#383838] text-white focus:border-[#3ea6ff] rounded-xl text-sm"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-200 mb-1.5" htmlFor="edit-bio">
-                  Bio
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="edit-bio">
+                  Channel Description (Bio)
                 </label>
                 <Textarea
                   id="edit-bio"
                   rows={3}
-                  placeholder="Share a short bio with your audience..."
+                  placeholder="Tell viewers about your channel..."
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
-                  className="bg-gray-800 border-gray-700 text-white focus:border-indigo-500"
+                  className="bg-[#121212] border-[#383838] text-white focus:border-[#3ea6ff] rounded-xl text-sm"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-200 mb-1.5">
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
                   Profile Picture
                 </label>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                   {avatarPreview ? (
                     <img
                       src={avatarPreview}
                       alt="Avatar preview"
-                      className="w-16 h-16 rounded-xl object-cover ring-1 ring-gray-700"
+                      className="w-14 h-14 rounded-full object-cover ring-1 ring-zinc-700"
                     />
                   ) : (
-                    <div className="w-16 h-16 rounded-xl bg-gray-800 flex items-center justify-center text-gray-500">
-                      <UserIcon className="h-8 w-8" />
+                    <div className="w-14 h-14 rounded-full bg-[#181818] flex items-center justify-center text-zinc-500">
+                      <UserIcon className="h-6 w-6" />
                     </div>
                   )}
                   <input
@@ -260,35 +280,34 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
                         setAvatarPreview(URL.createObjectURL(file))
                       }
                     }}
-                    className="text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
+                    className="text-xs text-zinc-400 file:mr-2 file:py-1 file:px-2.5 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-[#272727] file:text-zinc-200 hover:file:bg-[#383838] cursor-pointer"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-800">
-                <Button
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#333333]">
+                <button
                   type="button"
-                  variant="outline"
                   disabled={isSaving}
                   onClick={() => setIsEditing(false)}
-                  className="border-gray-700 text-gray-300 hover:text-white hover:bg-gray-800"
+                  className="px-4 py-2 rounded-full text-xs font-semibold text-zinc-300 hover:text-white hover:bg-[#2e2e2e] transition-colors"
                 >
                   Cancel
-                </Button>
-                <Button
+                </button>
+                <button
                   type="submit"
                   disabled={isSaving}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white gap-2"
+                  className="px-5 py-2 bg-[#ff0000] hover:bg-[#cc0000] text-white text-xs font-semibold rounded-full transition-colors flex items-center gap-2"
                 >
                   {isSaving ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       <span>Saving...</span>
                     </>
                   ) : (
-                    'Save Changes'
+                    'Save'
                   )}
-                </Button>
+                </button>
               </div>
             </form>
           </div>

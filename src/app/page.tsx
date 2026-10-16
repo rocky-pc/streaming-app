@@ -7,7 +7,7 @@ import { VideoGridSkeleton } from '@/components/video/VideoGridSkeleton'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Explore & Stream Videos',
+  title: 'Home',
   description: 'Watch, share, and discover public videos uploaded by the community.',
 }
 
@@ -22,8 +22,8 @@ export default async function HomePage({ searchParams }: PageProps) {
   const initialResult = await getVideos({ query, page: 1, limit: 12 })
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-[#0f0f0f]">
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <Suspense fallback={<VideoGridSkeleton />}>
           <HomePageClient
             initialVideos={initialResult.data}

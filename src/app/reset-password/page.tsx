@@ -5,9 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Play, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 
 export default function ResetPasswordPage() {
   const router = useRouter()
@@ -56,43 +55,46 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12 bg-gray-950">
-      <Card className="w-full max-w-md bg-gray-900/90 border-gray-800 shadow-2xl backdrop-blur-sm">
-        <CardHeader className="text-center space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600 shadow-lg shadow-indigo-600/30">
-            <Play className="h-6 w-6 text-white ml-0.5 fill-current" />
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-10 bg-[#0f0f0f] select-none">
+      <Card className="w-full max-w-md bg-[#181818] border-[#272727] shadow-2xl rounded-3xl">
+        <CardHeader className="text-center space-y-2 pt-8">
+          <div className="mx-auto flex items-center justify-center w-12 h-9 bg-[#ff0000] rounded-xl shadow-lg">
+            <div className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-white">Create New Password</CardTitle>
-          <CardDescription className="text-gray-400">
+          <CardTitle className="text-2xl font-bold tracking-tight text-white pt-2">Create New Password</CardTitle>
+          <CardDescription className="text-xs text-zinc-400">
             Enter your new secure password below
           </CardDescription>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="px-6 pb-8">
           {error && (
-            <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3.5 text-sm text-red-400">
-              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className="mb-5 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           {isSuccess ? (
-            <div className="space-y-4 text-center">
+            <div className="space-y-4 text-center py-2">
               <div className="flex items-center justify-center">
-                <CheckCircle2 className="h-12 w-12 text-emerald-400 animate-bounce" />
+                <CheckCircle2 className="h-12 w-12 text-emerald-400" />
               </div>
-              <p className="text-emerald-300 font-medium">Password updated successfully!</p>
-              <p className="text-sm text-gray-400">Redirecting you to the login page...</p>
-              <Link href="/login" className="inline-block mt-2">
-                <Button className="bg-indigo-600 hover:bg-indigo-500 text-white">
-                  Go to Login Now
-                </Button>
+              <p className="text-emerald-300 font-semibold text-sm">Password updated successfully!</p>
+              <p className="text-xs text-zinc-400">Redirecting you to the login page...</p>
+              <Link href="/login" className="inline-block mt-3 w-full">
+                <button
+                  type="button"
+                  className="w-full bg-[#ff0000] hover:bg-[#cc0000] text-white font-semibold py-2.5 rounded-full text-sm transition-colors"
+                >
+                  Sign In Now
+                </button>
               </Link>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5" htmlFor="password">
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="password">
                   New Password
                 </label>
                 <div className="relative">
@@ -103,12 +105,12 @@ export default function ResetPasswordPage() {
                     placeholder="At least 6 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pr-10 bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                    className="pr-10 bg-[#121212] border-[#383838] text-white placeholder-zinc-500 focus:border-[#3ea6ff] rounded-xl text-sm"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
                     tabIndex={-1}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
@@ -118,7 +120,7 @@ export default function ResetPasswordPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5" htmlFor="confirm-password">
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="confirm-password">
                   Confirm New Password
                 </label>
                 <Input
@@ -128,14 +130,14 @@ export default function ResetPasswordPage() {
                   placeholder="Repeat new password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                  className="bg-[#121212] border-[#383838] text-white placeholder-zinc-500 focus:border-[#3ea6ff] rounded-xl text-sm"
                 />
               </div>
 
-              <Button
+              <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 mt-2 transition-colors flex items-center justify-center gap-2"
+                className="w-full bg-[#ff0000] hover:bg-[#cc0000] disabled:bg-zinc-700 text-white font-semibold py-2.5 rounded-full mt-3 transition-colors flex items-center justify-center gap-2 text-sm shadow-sm"
               >
                 {isLoading ? (
                   <>
@@ -145,7 +147,7 @@ export default function ResetPasswordPage() {
                 ) : (
                   'Update Password'
                 )}
-              </Button>
+              </button>
             </form>
           )}
         </CardContent>

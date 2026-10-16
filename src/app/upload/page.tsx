@@ -1,13 +1,12 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
+import { Card, CardContent } from '@/components/ui/Card'
 import {
   Upload as UploadIcon,
   X,
@@ -19,10 +18,8 @@ import {
   Globe,
   Link2,
   Lock,
-  ArrowRight,
   Eye,
 } from 'lucide-react'
-import { siteConfig } from '@/config/site'
 import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
 import { generateId } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
@@ -50,7 +47,6 @@ export default function UploadPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const thumbInputRef = useRef<HTMLInputElement>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
 
   // Redirect if not authenticated once auth is loaded
   useEffect(() => {
@@ -103,7 +99,6 @@ export default function UploadPage() {
 
     setVideoFile(file)
     if (!title) {
-      // Auto populate title without extension
       const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ')
       setTitle(cleanName)
     }
@@ -168,8 +163,8 @@ export default function UploadPage() {
     }
 
     setIsUploading(true)
-    setUploadPercent(10)
-    setUploadStage('Uploading video file to storage...')
+    setUploadPercent(15)
+    setUploadStage('Uploading video stream to storage...')
 
     const supabase = getSupabaseBrowserClient()
     const videoId = generateId()
@@ -193,12 +188,12 @@ export default function UploadPage() {
         throw new Error(`Video upload failed: ${videoUploadError.message}`)
       }
 
-      setUploadPercent(60)
+      setUploadPercent(65)
       const videoPublicUrl = getPublicUrl('videos', videoStoragePath)
 
       // 2. Upload thumbnail if provided
       if (thumbnailFile) {
-        setUploadStage('Uploading thumbnail...')
+        setUploadStage('Uploading thumbnail image...')
         const thumbExt = thumbnailFile.name.split('.').pop()?.toLowerCase() || 'jpg'
         thumbnailStoragePath = `${user.id}/${videoId}.${thumbExt}`
 
@@ -218,9 +213,9 @@ export default function UploadPage() {
       }
 
       setUploadPercent(85)
-      setUploadStage('Saving video details...')
+      setUploadStage('Finalizing and saving details...')
 
-      // 3. Save metadata to API route (verifies session server-side)
+      // 3. Save metadata to API route
       const response = await fetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -245,14 +240,14 @@ export default function UploadPage() {
       }
 
       setUploadPercent(100)
-      setUploadStage('Upload complete!')
+      setUploadStage('Upload finished!')
       setCreatedVideo({
         id: data.video.id,
         title: data.video.title,
         thumbnail_url: thumbnailUrl || undefined,
       })
 
-      toast('Video uploaded successfully!', 'success')
+      toast('Video published successfully!', 'success')
     } catch (err) {
       console.error('Upload error:', err)
       setError(err instanceof Error ? err.message : 'An error occurred during upload.')
@@ -287,8 +282,8 @@ export default function UploadPage() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+      <div className="min-h-screen flex items-center justify-center bg-[#0f0f0f]">
+        <Loader2 className="h-8 w-8 animate-spin text-[#ff0000]" />
       </div>
     )
   }
@@ -298,30 +293,32 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto space-y-8">
+    <div className="min-h-screen bg-[#0f0f0f] py-8 px-4 sm:px-6 lg:px-8 select-none">
+      <div className="max-w-3xl mx-auto space-y-6">
         <div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight">Upload Video</h1>
-          <p className="mt-1 text-sm text-gray-400">
-            Publish a new video file to your channel and share it with the world.
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#f1f1f1] tracking-tight">
+            Upload Video
+          </h1>
+          <p className="mt-1 text-xs sm:text-sm text-zinc-400">
+            Publish a video file to your channel and share it with everyone.
           </p>
         </div>
 
         {createdVideo ? (
-          <Card className="bg-gray-900 border-gray-800 shadow-2xl p-8 text-center space-y-6">
+          <Card className="bg-[#181818] border-[#272727] shadow-2xl p-8 text-center space-y-6 rounded-3xl">
             <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center ring-8 ring-emerald-500/5">
               <CheckCircle2 className="h-10 w-10" />
             </div>
 
             <div>
               <h2 className="text-2xl font-bold text-white">Your Video is Ready!</h2>
-              <p className="mt-1 text-gray-400 text-sm">
-                &quot;{createdVideo.title}&quot; has been published successfully.
+              <p className="mt-1 text-zinc-400 text-sm">
+                &quot;{createdVideo.title}&quot; has been published to StreamFlow.
               </p>
             </div>
 
             {createdVideo.thumbnail_url && (
-              <div className="max-w-md mx-auto aspect-video rounded-xl overflow-hidden border border-gray-800 bg-gray-950">
+              <div className="max-w-md mx-auto aspect-video rounded-2xl overflow-hidden border border-[#272727] bg-black">
                 <img
                   src={createdVideo.thumbnail_url}
                   alt={createdVideo.title}
@@ -332,32 +329,31 @@ export default function UploadPage() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
               <Link href={`/video/${createdVideo.id}`}>
-                <Button className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white gap-2">
+                <button className="w-full sm:w-auto px-5 py-2.5 bg-[#ff0000] hover:bg-[#cc0000] text-white text-sm font-semibold rounded-full transition-colors flex items-center justify-center gap-2">
                   <Eye className="h-4 w-4" />
                   <span>Watch Video</span>
-                </Button>
+                </button>
               </Link>
 
               <Link href="/my-videos">
-                <Button variant="outline" className="w-full sm:w-auto border-gray-700 text-gray-300 hover:text-white hover:bg-gray-800">
-                  <span>Manage in My Videos</span>
-                </Button>
+                <button className="w-full sm:w-auto px-5 py-2.5 bg-[#272727] hover:bg-[#383838] text-white text-sm font-semibold rounded-full transition-colors">
+                  <span>Manage in Studio</span>
+                </button>
               </Link>
 
-              <Button
-                variant="ghost"
+              <button
                 onClick={handleReset}
-                className="w-full sm:w-auto text-gray-400 hover:text-white"
+                className="w-full sm:w-auto px-5 py-2.5 text-zinc-400 hover:text-white text-sm font-semibold rounded-full transition-colors"
               >
                 <span>Upload Another</span>
-              </Button>
+              </button>
             </div>
           </Card>
         ) : (
-          <Card className="bg-gray-900/90 border-gray-800 shadow-2xl">
-            <CardContent className="pt-6">
+          <Card className="bg-[#181818] border-[#272727] shadow-2xl rounded-3xl">
+            <CardContent className="pt-6 pb-6 px-6">
               {error && (
-                <div className="mb-6 flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+                <div className="mb-6 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs sm:text-sm text-rose-300">
                   <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
                   <span>{error}</span>
                 </div>
@@ -366,19 +362,19 @@ export default function UploadPage() {
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Video File Input */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-200 mb-2">
+                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
                     Video File <span className="text-red-400">*</span>
                   </label>
 
                   {videoFile ? (
-                    <div className="flex items-center justify-between p-4 rounded-xl bg-gray-850 border border-gray-750">
+                    <div className="flex items-center justify-between p-4 rounded-2xl bg-[#212121] border border-[#333333]">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0">
+                        <div className="w-10 h-10 rounded-xl bg-[#ff0000]/15 text-[#ff0000] flex items-center justify-center shrink-0">
                           <FileVideo className="h-6 w-6" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{videoFile.name}</p>
-                          <p className="text-xs text-gray-400">
+                          <p className="text-sm font-semibold text-white truncate">{videoFile.name}</p>
+                          <p className="text-xs text-zinc-400">
                             {formatFileSize(videoFile.size)} • {videoFile.type || 'Video'}
                           </p>
                         </div>
@@ -387,7 +383,7 @@ export default function UploadPage() {
                         type="button"
                         onClick={removeVideo}
                         disabled={isUploading}
-                        className="text-gray-400 hover:text-rose-400 p-1.5 rounded-lg transition-colors"
+                        className="text-zinc-400 hover:text-rose-400 p-1.5 rounded-full transition-colors"
                         aria-label="Remove video"
                       >
                         <X className="h-5 w-5" />
@@ -403,7 +399,7 @@ export default function UploadPage() {
                           handleVideoSelect(e.dataTransfer.files[0])
                         }
                       }}
-                      className="border-2 border-dashed border-gray-700 hover:border-indigo-500/70 rounded-2xl p-8 text-center cursor-pointer transition-colors bg-gray-950/40 hover:bg-indigo-950/10"
+                      className="border-2 border-dashed border-[#383838] hover:border-[#ff0000]/70 rounded-3xl p-8 sm:p-12 text-center cursor-pointer transition-colors bg-[#141414] hover:bg-[#1a1a1a]"
                     >
                       <input
                         ref={fileInputRef}
@@ -414,13 +410,13 @@ export default function UploadPage() {
                           if (e.target.files?.[0]) handleVideoSelect(e.target.files[0])
                         }}
                       />
-                      <div className="mx-auto w-12 h-12 rounded-xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center mb-3">
-                        <UploadIcon className="h-6 w-6" />
+                      <div className="mx-auto w-14 h-14 rounded-full bg-white/5 text-zinc-300 flex items-center justify-center mb-3">
+                        <UploadIcon className="h-7 w-7" />
                       </div>
-                      <p className="text-sm font-medium text-white">
-                        Click to select or drag and drop video file
+                      <p className="text-sm font-semibold text-white">
+                        Select files to upload or drag and drop
                       </p>
-                      <p className="text-xs text-gray-400 mt-1">
+                      <p className="text-xs text-zinc-400 mt-1">
                         MP4, WebM, or MOV up to 2 GB
                       </p>
                     </div>
@@ -429,46 +425,46 @@ export default function UploadPage() {
 
                 {/* Title */}
                 <div>
-                  <label htmlFor="title" className="block text-sm font-semibold text-gray-200 mb-2">
-                    Title <span className="text-red-400">*</span>
+                  <label htmlFor="title" className="block text-xs font-semibold text-zinc-300 mb-1.5">
+                    Title (required) <span className="text-red-400">*</span>
                   </label>
                   <Input
                     id="title"
                     type="text"
                     required
                     disabled={isUploading}
-                    placeholder="Enter an engaging video title..."
+                    placeholder="Add a title that describes your video..."
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                    className="bg-[#121212] border-[#383838] text-white focus:border-[#3ea6ff] rounded-xl text-sm"
                   />
                 </div>
 
                 {/* Description */}
                 <div>
-                  <label htmlFor="description" className="block text-sm font-semibold text-gray-200 mb-2">
+                  <label htmlFor="description" className="block text-xs font-semibold text-zinc-300 mb-1.5">
                     Description
                   </label>
                   <Textarea
                     id="description"
                     rows={4}
                     disabled={isUploading}
-                    placeholder="Tell viewers what your video is about..."
+                    placeholder="Tell viewers about your video..."
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                    className="bg-[#121212] border-[#383838] text-white focus:border-[#3ea6ff] rounded-xl text-sm"
                   />
                 </div>
 
                 {/* Thumbnail Picker */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-200 mb-2">
-                    Custom Thumbnail (Optional)
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
+                    Thumbnail (optional)
                   </label>
 
                   {thumbnailPreview ? (
-                    <div className="flex items-center gap-4 p-3 rounded-xl bg-gray-850 border border-gray-750">
-                      <div className="w-24 aspect-video rounded-lg overflow-hidden bg-gray-900 border border-gray-700 shrink-0">
+                    <div className="flex items-center gap-4 p-3 rounded-2xl bg-[#212121] border border-[#333333]">
+                      <div className="w-28 aspect-video rounded-xl overflow-hidden bg-black border border-[#383838] shrink-0">
                         <img
                           src={thumbnailPreview}
                           alt="Thumbnail preview"
@@ -477,7 +473,7 @@ export default function UploadPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-white truncate">{thumbnailFile?.name}</p>
-                        <p className="text-[11px] text-gray-400">
+                        <p className="text-[11px] text-zinc-400">
                           {thumbnailFile ? formatFileSize(thumbnailFile.size) : ''}
                         </p>
                       </div>
@@ -485,7 +481,7 @@ export default function UploadPage() {
                         type="button"
                         onClick={removeThumbnail}
                         disabled={isUploading}
-                        className="text-gray-400 hover:text-rose-400 p-1.5 rounded-lg transition-colors"
+                        className="text-zinc-400 hover:text-rose-400 p-1.5 rounded-full transition-colors"
                         aria-label="Remove thumbnail"
                       >
                         <X className="h-4 w-4" />
@@ -494,7 +490,7 @@ export default function UploadPage() {
                   ) : (
                     <div
                       onClick={() => thumbInputRef.current?.click()}
-                      className="border border-dashed border-gray-750 hover:border-gray-600 rounded-xl p-4 text-center cursor-pointer transition-colors bg-gray-950/30 flex items-center justify-center gap-3"
+                      className="border border-dashed border-[#383838] hover:border-zinc-500 rounded-2xl p-4 text-center cursor-pointer transition-colors bg-[#141414] flex items-center justify-center gap-3"
                     >
                       <input
                         ref={thumbInputRef}
@@ -505,8 +501,8 @@ export default function UploadPage() {
                           if (e.target.files?.[0]) handleThumbnailSelect(e.target.files[0])
                         }}
                       />
-                      <ImageIcon className="h-5 w-5 text-gray-400" />
-                      <span className="text-xs text-gray-300">
+                      <ImageIcon className="h-5 w-5 text-zinc-400" />
+                      <span className="text-xs text-zinc-300 font-medium">
                         Upload custom thumbnail (JPG, PNG, WebP up to 5MB)
                       </span>
                     </div>
@@ -515,7 +511,7 @@ export default function UploadPage() {
 
                 {/* Visibility Selection */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-200 mb-2">
+                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
                     Visibility
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -524,17 +520,17 @@ export default function UploadPage() {
                       disabled={isUploading}
                       onClick={() => setVisibility('public')}
                       className={cn(
-                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        'flex flex-col text-left p-3.5 rounded-2xl border transition-all',
                         visibility === 'public'
-                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
-                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                          ? 'border-white bg-[#282828] text-white ring-1 ring-white'
+                          : 'border-[#333333] bg-[#1a1a1a] text-zinc-400 hover:border-[#444444]'
                       )}
                     >
-                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
-                        <Globe className="h-4 w-4 text-indigo-400" />
+                      <div className="flex items-center gap-2 font-semibold text-sm text-white mb-1">
+                        <Globe className="h-4 w-4 text-emerald-400" />
                         <span>Public</span>
                       </div>
-                      <span className="text-xs text-gray-400 leading-normal">
+                      <span className="text-xs text-zinc-400 leading-normal">
                         Visible on home page and playable by everyone
                       </span>
                     </button>
@@ -544,17 +540,17 @@ export default function UploadPage() {
                       disabled={isUploading}
                       onClick={() => setVisibility('unlisted')}
                       className={cn(
-                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        'flex flex-col text-left p-3.5 rounded-2xl border transition-all',
                         visibility === 'unlisted'
-                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
-                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                          ? 'border-white bg-[#282828] text-white ring-1 ring-white'
+                          : 'border-[#333333] bg-[#1a1a1a] text-zinc-400 hover:border-[#444444]'
                       )}
                     >
-                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
+                      <div className="flex items-center gap-2 font-semibold text-sm text-white mb-1">
                         <Link2 className="h-4 w-4 text-amber-400" />
                         <span>Unlisted</span>
                       </div>
-                      <span className="text-xs text-gray-400 leading-normal">
+                      <span className="text-xs text-zinc-400 leading-normal">
                         Anyone with the link can watch; hidden from search
                       </span>
                     </button>
@@ -564,36 +560,36 @@ export default function UploadPage() {
                       disabled={isUploading}
                       onClick={() => setVisibility('private')}
                       className={cn(
-                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        'flex flex-col text-left p-3.5 rounded-2xl border transition-all',
                         visibility === 'private'
-                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
-                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                          ? 'border-white bg-[#282828] text-white ring-1 ring-white'
+                          : 'border-[#333333] bg-[#1a1a1a] text-zinc-400 hover:border-[#444444]'
                       )}
                     >
-                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
+                      <div className="flex items-center gap-2 font-semibold text-sm text-white mb-1">
                         <Lock className="h-4 w-4 text-rose-400" />
                         <span>Private</span>
                       </div>
-                      <span className="text-xs text-gray-400 leading-normal">
+                      <span className="text-xs text-zinc-400 leading-normal">
                         Only you can view and play this video
                       </span>
                     </button>
                   </div>
                 </div>
 
-                {/* Upload Progress */}
+                {/* Upload Progress Bar */}
                 {isUploading && (
-                  <div className="space-y-2 p-4 rounded-xl bg-gray-850 border border-gray-750">
-                    <div className="flex justify-between text-xs text-gray-300 font-medium">
+                  <div className="space-y-2 p-4 rounded-2xl bg-[#212121] border border-[#333333]">
+                    <div className="flex justify-between text-xs text-zinc-300 font-medium">
                       <span className="flex items-center gap-2">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#ff0000]" />
                         {uploadStage}
                       </span>
                       <span>{uploadPercent}%</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-gray-700 overflow-hidden">
+                    <div className="w-full h-2 rounded-full bg-[#333333] overflow-hidden">
                       <div
-                        className="h-full bg-indigo-600 transition-all duration-300 rounded-full"
+                        className="h-full bg-[#ff0000] transition-all duration-300 rounded-full"
                         style={{ width: `${uploadPercent}%` }}
                       />
                     </div>
@@ -602,10 +598,10 @@ export default function UploadPage() {
 
                 {/* Submit Button */}
                 <div className="pt-2 flex justify-end">
-                  <Button
+                  <button
                     type="submit"
                     disabled={isUploading || !videoFile}
-                    className="w-full sm:w-auto px-8 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 transition-colors gap-2"
+                    className="w-full sm:w-auto px-8 py-2.5 bg-[#ff0000] hover:bg-[#cc0000] disabled:bg-zinc-700 text-white font-semibold text-sm rounded-full transition-colors flex items-center justify-center gap-2 shadow-sm"
                   >
                     {isUploading ? (
                       <>
@@ -618,7 +614,7 @@ export default function UploadPage() {
                         <span>Publish Video</span>
                       </>
                     )}
-                  </Button>
+                  </button>
                 </div>
               </form>
             </CardContent>

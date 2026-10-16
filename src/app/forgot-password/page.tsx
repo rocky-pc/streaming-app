@@ -4,9 +4,8 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Play, CheckCircle2, AlertCircle, Loader2, ArrowLeft } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Loader2, ArrowLeft } from 'lucide-react'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -44,45 +43,48 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12 bg-gray-950">
-      <Card className="w-full max-w-md bg-gray-900/90 border-gray-800 shadow-2xl backdrop-blur-sm">
-        <CardHeader className="text-center space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600 shadow-lg shadow-indigo-600/30">
-            <Play className="h-6 w-6 text-white ml-0.5 fill-current" />
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-10 bg-[#0f0f0f] select-none">
+      <Card className="w-full max-w-md bg-[#181818] border-[#272727] shadow-2xl rounded-3xl">
+        <CardHeader className="text-center space-y-2 pt-8">
+          <div className="mx-auto flex items-center justify-center w-12 h-9 bg-[#ff0000] rounded-xl shadow-lg">
+            <div className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-white">Reset Password</CardTitle>
-          <CardDescription className="text-gray-400">
-            Enter your email to receive a password reset link
+          <CardTitle className="text-2xl font-bold tracking-tight text-white pt-2">Reset Password</CardTitle>
+          <CardDescription className="text-xs text-zinc-400">
+            Enter your email to receive a password reset recovery link
           </CardDescription>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="px-6 pb-8">
           {error && (
-            <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3.5 text-sm text-red-400">
-              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className="mb-5 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           {isSuccess ? (
             <div className="space-y-5">
-              <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+              <div className="flex items-start gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-300">
                 <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5 text-emerald-400" />
                 <p>
-                  A password reset email has been sent to <strong>{email}</strong>. Check your inbox and follow the instructions to reset your password.
+                  A password reset email has been sent to <strong>{email}</strong>. Check your inbox and click the link to choose a new password.
                 </p>
               </div>
               <Link href="/login" className="block w-full">
-                <Button variant="outline" className="w-full border-gray-700 text-gray-200 hover:text-white hover:bg-gray-800">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
+                <button
+                  type="button"
+                  className="w-full bg-[#272727] hover:bg-[#3f3f3f] text-white font-semibold py-2.5 rounded-full text-sm transition-colors flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft className="h-4 w-4 mr-1" />
                   Return to Sign In
-                </Button>
+                </button>
               </Link>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5" htmlFor="email">
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="email">
                   Email Address
                 </label>
                 <Input
@@ -92,29 +94,29 @@ export default function ForgotPasswordPage() {
                   placeholder="alex@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                  className="bg-[#121212] border-[#383838] text-white placeholder-zinc-500 focus:border-[#3ea6ff] rounded-xl text-sm"
                 />
               </div>
 
-              <Button
+              <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 mt-2 transition-colors flex items-center justify-center gap-2"
+                className="w-full bg-[#ff0000] hover:bg-[#cc0000] disabled:bg-zinc-700 text-white font-semibold py-2.5 rounded-full mt-3 transition-colors flex items-center justify-center gap-2 text-sm shadow-sm"
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Sending Link...</span>
+                    <span>Sending Reset Link...</span>
                   </>
                 ) : (
                   'Send Reset Link'
                 )}
-              </Button>
+              </button>
 
-              <div className="text-center pt-2">
+              <div className="text-center pt-3 border-t border-[#272727] mt-5">
                 <Link
                   href="/login"
-                  className="inline-flex items-center text-sm font-medium text-gray-400 hover:text-white transition-colors"
+                  className="inline-flex items-center text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
                 >
                   <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
                   Back to Sign In
