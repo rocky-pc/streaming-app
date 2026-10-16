@@ -115,27 +115,62 @@ export function LivePlayerClient({ initialStream, streamId }: LivePlayerClientPr
         return
       }
 
-      // 1. Fetch Viewer Token from API
-      const tokenRes = await fetch('/api/livekit/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          streamId,
-          action: 'view',
-        }),
-      })
+      // 1. Fetch Viewer Token from API (with Supabase Edge Function fallback)
+      let tokenData: { token: string; livekitUrl?: string; status?: string } | null = null
+      try {
+        const tokenRes = await fetch('/api/livekit/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            streamId,
+            action: 'view',
+          }),
+        })
 
-      const tokenData = await tokenRes.json()
-      if (!tokenRes.ok || !tokenData.token) {
-        if (tokenData.status === 'ended') {
-          setIsEnded(true)
-          setIsLoading(false)
-          return
+        const resJson = await tokenRes.json()
+        if (tokenRes.ok && resJson.token) {
+          tokenData = resJson
+        } else {
+          if (resJson.status === 'ended') {
+            setIsEnded(true)
+            setIsLoading(false)
+            return
+          }
+          throw new Error(resJson.error || 'Server token error')
         }
-        throw new Error(tokenData.error || 'Failed to obtain access token.')
+      } catch (apiErr: unknown) {
+        // Fallback directly to deployed Supabase Edge Function livekit-token
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
+        const edgeRes = await fetch(`${supabaseUrl}/functions/v1/livekit-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            streamId,
+            action: 'view',
+          }),
+        })
+
+        const edgeJson = await edgeRes.json()
+        if (edgeRes.ok && edgeJson.token) {
+          tokenData = edgeJson
+        } else {
+          if (edgeJson.status === 'ended') {
+            setIsEnded(true)
+            setIsLoading(false)
+            return
+          }
+          const errMsg = edgeJson?.error || (apiErr instanceof Error ? apiErr.message : 'Failed to obtain access token.')
+          throw new Error(errMsg)
+        }
       }
 
-      const livekitUrl = tokenData.livekitUrl || process.env.NEXT_PUBLIC_LIVEKIT_URL
+      if (!tokenData || !tokenData.token) {
+        throw new Error('Failed to obtain access token.')
+      }
+
+      const livekitUrl = tokenData.livekitUrl || process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://stream-flow-8560l64p.livekit.cloud'
 
       // 2. Disconnect existing room if any
       if (roomRef.current) {

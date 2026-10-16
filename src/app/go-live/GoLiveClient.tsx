@@ -294,23 +294,54 @@ export function GoLiveClient() {
       setStreamId(newStream.id)
 
       // 2. Request Broadcaster Token from /api/livekit/token (or Supabase Edge Function)
-      const tokenRes = await fetch('/api/livekit/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          streamId: newStream.id,
-          action: 'broadcast',
-          participantName: profile?.display_name || user?.email || 'Broadcaster',
-        }),
-      })
+      let tokenData: { token: string; livekitUrl?: string } | null = null
+      try {
+        const tokenRes = await fetch('/api/livekit/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            streamId: newStream.id,
+            action: 'broadcast',
+            participantName: profile?.display_name || user?.email || 'Broadcaster',
+          }),
+        })
 
-      const tokenData = await tokenRes.json()
-      if (!tokenRes.ok || !tokenData.token) {
-        throw new Error(tokenData.error || 'Failed to retrieve authorization token from server.')
+        const resJson = await tokenRes.json()
+        if (tokenRes.ok && resJson.token) {
+          tokenData = resJson
+        } else {
+          throw new Error(resJson.error || 'Server token generation error')
+        }
+      } catch (apiErr: unknown) {
+        // Fallback directly to deployed Supabase Edge Function livekit-token
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
+        const edgeRes = await fetch(`${supabaseUrl}/functions/v1/livekit-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            streamId: newStream.id,
+            action: 'broadcast',
+            participantName: profile?.display_name || user?.email || 'Broadcaster',
+          }),
+        })
+
+        const edgeJson = await edgeRes.json()
+        if (edgeRes.ok && edgeJson.token) {
+          tokenData = edgeJson
+        } else {
+          const errMsg = edgeJson?.error || (apiErr instanceof Error ? apiErr.message : 'Failed to retrieve authorization token.')
+          throw new Error(errMsg)
+        }
+      }
+
+      if (!tokenData || !tokenData.token) {
+        throw new Error('Failed to obtain a valid streaming token.')
       }
 
       // 3. Connect to LiveKit Room using official client SDK
-      const livekitUrl = tokenData.livekitUrl || process.env.NEXT_PUBLIC_LIVEKIT_URL
+      const livekitUrl = tokenData.livekitUrl || process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://stream-flow-8560l64p.livekit.cloud'
       if (!livekitUrl) {
         throw new Error('LiveKit WebSocket connection URL is missing.')
       }

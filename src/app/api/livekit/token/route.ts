@@ -5,9 +5,9 @@ import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
-    const livekitApiKey = process.env.LIVEKIT_API_KEY
-    const livekitApiSecret = process.env.LIVEKIT_API_SECRET
-    const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL || process.env.LIVEKIT_URL
+    const livekitApiKey = process.env.LIVEKIT_API_KEY || 'APID9m8XgypZbA4'
+    const livekitApiSecret = process.env.LIVEKIT_API_SECRET || 'N2RpJ7xVbyNfZnd3bzY1yQ6CZPoVTLGRS3cqYnnF6qO'
+    const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL || process.env.LIVEKIT_URL || 'wss://stream-flow-8560l64p.livekit.cloud'
 
     if (!livekitApiKey || !livekitApiSecret || !livekitUrl) {
       return NextResponse.json(
@@ -51,10 +51,9 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Fetch stream from database using service role client to ensure reliable access
-    const supabaseService = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
+    const supabaseService = createClient(supabaseUrl, supabaseServiceKey)
 
     const { data: stream, error: streamError } = await supabaseService
       .from('live_streams')
