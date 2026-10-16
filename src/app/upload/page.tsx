@@ -1,60 +1,65 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
-import { Upload, X, CheckCircle, AlertCircle, Loader2, FileVideo, Image as ImageIcon } from 'lucide-react'
-import { siteConfig, type AllowedVideoType, type AllowedThumbnailType } from '@/config/site'
-import { supabase, createSignedUploadUrl, getPublicUrl } from '@/lib/supabase'
+import {
+  Upload as UploadIcon,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  FileVideo,
+  Image as ImageIcon,
+  Globe,
+  Link2,
+  Lock,
+  ArrowRight,
+  Eye,
+} from 'lucide-react'
+import { siteConfig } from '@/config/site'
+import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
 import { generateId } from '@/lib/utils'
-
-interface UploadPageProps {}
+import { useAuth } from '@/context/AuthContext'
+import { useToast } from '@/context/ToastContext'
+import type { VideoVisibility } from '@/types'
 
 export default function UploadPage() {
+  const router = useRouter()
+  const { user, isLoading: isAuthLoading } = useAuth()
+  const { toast } = useToast()
+
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [visibility, setVisibility] = useState<VideoVisibility>('public')
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null)
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null)
+  const [duration, setDuration] = useState<number>(0)
+
   const [isUploading, setIsUploading] = useState(false)
-  const [videoProgress, setVideoProgress] = useState(0)
-  const [thumbProgress, setThumbProgress] = useState(0)
+  const [uploadStage, setUploadStage] = useState<string>('')
+  const [uploadPercent, setUploadPercent] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [createdVideo, setCreatedVideo] = useState<{ id: string; title: string; thumbnail_url?: string } | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const thumbInputRef = useRef<HTMLInputElement>(null)
-  const videoXhrRef = useRef<XMLHttpRequest | null>(null)
-  const thumbXhrRef = useRef<XMLHttpRequest | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
-  const validateVideo = useCallback((file: File): boolean => {
-    if (!siteConfig.video.allowedTypes.includes(file.type as AllowedVideoType)) {
-      setError(`Unsupported video format. Allowed: ${siteConfig.video.allowedTypes.join(', ')}`)
-      return false
+  // Redirect if not authenticated once auth is loaded
+  useEffect(() => {
+    if (!isAuthLoading && !user) {
+      router.push('/login?redirect=/upload')
     }
-    if (file.size > siteConfig.video.maxFileSize) {
-      setError(`Video too large. Maximum size: ${formatFileSize(siteConfig.video.maxFileSize)}`)
-      return false
-    }
-    return true
-  }, [])
+  }, [user, isAuthLoading, router])
 
-  const validateThumbnail = useCallback((file: File): boolean => {
-    if (!siteConfig.video.thumbnailTypes.includes(file.type as AllowedThumbnailType)) {
-      setError(`Unsupported image format. Allowed: ${siteConfig.video.thumbnailTypes.join(', ')}`)
-      return false
-    }
-    if (file.size > siteConfig.video.maxThumbnailSize) {
-      setError(`Thumbnail too large. Maximum size: ${formatFileSize(siteConfig.video.maxThumbnailSize)}`)
-      return false
-    }
-    return true
-  }, [])
-
-  function formatFileSize(bytes: number): string {
+  const formatFileSize = (bytes: number): string => {
     const units = ['B', 'KB', 'MB', 'GB']
     let size = bytes
     let unitIndex = 0
@@ -65,437 +70,561 @@ export default function UploadPage() {
     return `${size.toFixed(1)} ${units[unitIndex]}`
   }
 
-  const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      if (validateVideo(file)) {
-        setVideoFile(file)
-        setError(null)
+  const getVideoDuration = (file: File): Promise<number> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(video.src)
+        resolve(video.duration || 0)
       }
+      video.onerror = () => {
+        URL.revokeObjectURL(video.src)
+        resolve(0)
+      }
+      video.src = URL.createObjectURL(file)
+    })
+  }
+
+  const handleVideoSelect = async (file: File) => {
+    setError(null)
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska']
+    const ext = file.name.split('.').pop()?.toLowerCase()
+
+    if (!allowedTypes.includes(file.type) && !['mp4', 'webm', 'mov', 'mkv'].includes(ext || '')) {
+      setError('Unsupported video format. Please upload MP4, WebM, or QuickTime (.mov).')
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      setError('Video file exceeds maximum limit of 2 GB.')
+      return
+    }
+
+    setVideoFile(file)
+    if (!title) {
+      // Auto populate title without extension
+      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ')
+      setTitle(cleanName)
+    }
+
+    try {
+      const dur = await getVideoDuration(file)
+      setDuration(dur)
+    } catch {
+      setDuration(0)
     }
   }
 
-  const handleThumbnailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      if (validateThumbnail(file)) {
-        setThumbnailFile(file)
-        setError(null)
-      }
+  const handleThumbnailSelect = (file: File) => {
+    setError(null)
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      setError('Thumbnail must be a JPEG, PNG, or WebP image.')
+      return
     }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Thumbnail exceeds maximum limit of 5 MB.')
+      return
+    }
+
+    setThumbnailFile(file)
+    setThumbnailPreview(URL.createObjectURL(file))
   }
 
   const removeVideo = () => {
     setVideoFile(null)
+    setDuration(0)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const removeThumbnail = () => {
     setThumbnailFile(null)
+    if (thumbnailPreview) {
+      URL.revokeObjectURL(thumbnailPreview)
+      setThumbnailPreview(null)
+    }
     if (thumbInputRef.current) thumbInputRef.current.value = ''
-  }
-
-  const cancelUploads = () => {
-    videoXhrRef.current?.abort()
-    thumbXhrRef.current?.abort()
-  }
-
-  const uploadToSupabase = async (
-    file: File,
-    bucket: string,
-    path: string,
-    onProgress: (percent: number) => void
-  ): Promise<string> => {
-    const signedUrl = await createSignedUploadUrl(bucket, path)
-    
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      
-      if (bucket === 'videos') {
-        videoXhrRef.current = xhr
-      } else {
-        thumbXhrRef.current = xhr
-      }
-
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100)
-          onProgress(percent)
-        }
-      })
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const publicUrl = getPublicUrl(bucket, path)
-          resolve(publicUrl)
-        } else {
-          reject(new Error(`Upload failed with status ${xhr.status}`))
-        }
-      })
-
-      xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
-      xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
-
-      xhr.open('PUT', signedUrl)
-      xhr.setRequestHeader('Content-Type', file.type)
-      xhr.send(file)
-    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSuccess(false)
-    setVideoProgress(0)
-    setThumbProgress(0)
+
+    if (!user) {
+      setError('You must be logged in to upload.')
+      return
+    }
 
     if (!title.trim()) {
-      setError('Please enter a title')
+      setError('Please enter a video title.')
       return
     }
 
     if (!videoFile) {
-      setError('Please select a video file')
+      setError('Please select a video file.')
       return
     }
 
     setIsUploading(true)
+    setUploadPercent(10)
+    setUploadStage('Uploading video file to storage...')
+
+    const supabase = getSupabaseBrowserClient()
+    const videoId = generateId()
+    const videoExt = videoFile.name.split('.').pop()?.toLowerCase() || 'mp4'
+    const videoStoragePath = `${user.id}/${videoId}.${videoExt}`
+
+    let thumbnailStoragePath: string | null = null
+    let thumbnailUrl: string | null = null
 
     try {
-      const videoId = generateId()
-      const videoExt = videoFile.name.split('.').pop()?.toLowerCase() || 'mp4'
-      const videoPath = `${videoId}.${videoExt}`
+      // 1. Upload video file directly to Supabase Storage
+      const { data: videoData, error: videoUploadError } = await supabase.storage
+        .from('videos')
+        .upload(videoStoragePath, videoFile, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: videoFile.type || 'video/mp4',
+        })
 
-      const videoUrlResult = await uploadToSupabase(
-        videoFile,
-        'videos',
-        videoPath,
-        setVideoProgress
-      )
-
-      let thumbnailUrl: string | null = null
-      let thumbnailPath: string | null = null
-
-      if (thumbnailFile && thumbnailFile.size > 0) {
-        const thumbExt = thumbnailFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-        thumbnailPath = `${videoId}.${thumbExt}`
-        
-        thumbnailUrl = await uploadToSupabase(
-          thumbnailFile,
-          'thumbnails',
-          thumbnailPath,
-          setThumbProgress
-        )
+      if (videoUploadError) {
+        throw new Error(`Video upload failed: ${videoUploadError.message}`)
       }
 
-      const duration = await getVideoDuration(videoFile)
+      setUploadPercent(60)
+      const videoPublicUrl = getPublicUrl('videos', videoStoragePath)
 
+      // 2. Upload thumbnail if provided
+      if (thumbnailFile) {
+        setUploadStage('Uploading thumbnail...')
+        const thumbExt = thumbnailFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+        thumbnailStoragePath = `${user.id}/${videoId}.${thumbExt}`
+
+        const { error: thumbUploadError } = await supabase.storage
+          .from('thumbnails')
+          .upload(thumbnailStoragePath, thumbnailFile, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: thumbnailFile.type || 'image/jpeg',
+          })
+
+        if (thumbUploadError) {
+          console.warn('Thumbnail upload warning:', thumbUploadError.message)
+        } else {
+          thumbnailUrl = getPublicUrl('thumbnails', thumbnailStoragePath)
+        }
+      }
+
+      setUploadPercent(85)
+      setUploadStage('Saving video details...')
+
+      // 3. Save metadata to API route (verifies session server-side)
       const response = await fetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title,
-          description: description || null,
+          title: title.trim(),
+          description: description.trim() || null,
           thumbnail_url: thumbnailUrl,
-          video_url: videoUrlResult,
+          video_url: videoPublicUrl,
           duration,
           file_size: videoFile.size,
-          mime_type: videoFile.type,
-          storage_path: videoPath,
-          thumbnail_path: thumbnailPath,
+          mime_type: videoFile.type || 'video/mp4',
+          storage_path: videoStoragePath,
+          thumbnail_path: thumbnailStoragePath,
+          visibility,
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to save video metadata')
+        throw new Error(data.error || 'Failed to save video metadata.')
       }
 
-      setSuccess(true)
-      setVideoUrl(`/video/${data.video.id}`)
-      setTitle('')
-      setDescription('')
-      setVideoFile(null)
-      setThumbnailFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-      if (thumbInputRef.current) thumbInputRef.current.value = ''
+      setUploadPercent(100)
+      setUploadStage('Upload complete!')
+      setCreatedVideo({
+        id: data.video.id,
+        title: data.video.title,
+        thumbnail_url: thumbnailUrl || undefined,
+      })
+
+      toast('Video uploaded successfully!', 'success')
     } catch (err) {
-      if (err instanceof Error && err.message === 'Upload cancelled') {
-        setError('Upload cancelled')
-      } else {
-        setError(err instanceof Error ? err.message : 'Upload failed. Please try again.')
+      console.error('Upload error:', err)
+      setError(err instanceof Error ? err.message : 'An error occurred during upload.')
+
+      // Clean up orphaned storage files on failure
+      try {
+        if (videoStoragePath) {
+          await supabase.storage.from('videos').remove([videoStoragePath])
+        }
+        if (thumbnailStoragePath) {
+          await supabase.storage.from('thumbnails').remove([thumbnailStoragePath])
+        }
+      } catch (cleanErr) {
+        console.warn('Clean up error:', cleanErr)
       }
     } finally {
       setIsUploading(false)
-      setVideoProgress(0)
-      setThumbProgress(0)
-      videoXhrRef.current = null
-      thumbXhrRef.current = null
     }
   }
 
-  useEffect(() => {
-    return () => {
-      cancelUploads()
-    }
-  }, [])
+  const handleReset = () => {
+    setTitle('')
+    setDescription('')
+    setVisibility('public')
+    removeVideo()
+    removeThumbnail()
+    setCreatedVideo(null)
+    setError(null)
+    setUploadPercent(0)
+    setUploadStage('')
+  }
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+      </div>
+    )
+  }
+
+  if (!user) {
+    return null
+  }
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Upload Video</h1>
-          <p className="text-gray-400">Share your content with the world</p>
+    <div className="min-h-screen bg-gray-950 py-10 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-3xl mx-auto space-y-8">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight">Upload Video</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            Publish a new video file to your channel and share it with the world.
+          </p>
         </div>
 
-        {success && videoUrl && (
-          <div className="mb-6 p-4 bg-green-900/30 border border-green-700 rounded-lg">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-6 w-6 text-green-400" />
-              <div>
-                <p className="text-green-300 font-medium">Video uploaded successfully!</p>
-                <a href={videoUrl} className="text-indigo-400 hover:underline text-sm">
-                  View your video
-                </a>
-              </div>
+        {createdVideo ? (
+          <Card className="bg-gray-900 border-gray-800 shadow-2xl p-8 text-center space-y-6">
+            <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center ring-8 ring-emerald-500/5">
+              <CheckCircle2 className="h-10 w-10" />
             </div>
-          </div>
-        )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <Card className="bg-gray-900/50 border-gray-800">
-            <CardHeader>
-              <CardTitle>Video File</CardTitle>
-              <CardDescription>MP4, WebM, MOV up to 2GB (direct upload to Supabase)</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="relative">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={siteConfig.video.allowedTypes.join(',')}
-                  onChange={handleVideoChange}
-                  className="sr-only"
-                  id="video-upload"
-                  disabled={isUploading}
-                />
-                <label
-                  htmlFor="video-upload"
-                  className={cn(
-                    'flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all',
-                    videoFile
-                      ? 'border-green-500 bg-green-500/10'
-                      : 'border-gray-700 hover:border-indigo-500 hover:bg-gray-800/50'
-                  )}
-                >
-                  {videoFile ? (
-                    <div className="w-full space-y-3">
-                      <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg">
-                        <FileVideo className="h-8 w-8 text-indigo-500" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white font-medium truncate">{videoFile.name}</p>
-                          <p className="text-sm text-gray-400">{formatFileSize(videoFile.size)} • {videoFile.type}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={removeVideo}
-                          className="text-gray-400 hover:text-red-400"
-                          disabled={isUploading}
-                        >
-                          <X className="h-5 w-5" />
-                        </Button>
-                      </div>
-                      {isUploading && videoProgress > 0 && (
-                        <div className="w-full">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>Video Upload</span>
-                            <span>{videoProgress}%</span>
-                          </div>
-                          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-indigo-500 transition-all duration-300"
-                              style={{ width: `${videoProgress}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <Upload className="h-12 w-12 text-gray-500 mb-3" />
-                      <p className="text-gray-300 mb-1">Drag & drop a video file, or click to browse</p>
-                      <p className="text-sm text-gray-500">Maximum file size: 2GB</p>
-                    </div>
-                  )}
-                </label>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gray-900/50 border-gray-800">
-            <CardHeader>
-              <CardTitle>Thumbnail (Optional)</CardTitle>
-              <CardDescription>JPG, PNG, WebP up to 5MB</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="relative">
-                <input
-                  ref={thumbInputRef}
-                  type="file"
-                  accept={siteConfig.video.thumbnailTypes.join(',')}
-                  onChange={handleThumbnailChange}
-                  className="sr-only"
-                  id="thumbnail-upload"
-                  disabled={isUploading}
-                />
-                <label
-                  htmlFor="thumbnail-upload"
-                  className={cn(
-                    'flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all',
-                    thumbnailFile
-                      ? 'border-green-500 bg-green-500/10'
-                      : 'border-gray-700 hover:border-indigo-500 hover:bg-gray-800/50'
-                  )}
-                >
-                  {thumbnailFile ? (
-                    <div className="w-full space-y-3">
-                      <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg">
-                        <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-700 flex-shrink-0">
-                          <img
-                            src={URL.createObjectURL(thumbnailFile)}
-                            alt="Thumbnail preview"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white font-medium truncate">{thumbnailFile.name}</p>
-                          <p className="text-sm text-gray-400">{formatFileSize(thumbnailFile.size)} • {thumbnailFile.type}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={removeThumbnail}
-                          className="text-gray-400 hover:text-red-400"
-                          disabled={isUploading}
-                        >
-                          <X className="h-5 w-5" />
-                        </Button>
-                      </div>
-                      {isUploading && thumbProgress > 0 && (
-                        <div className="w-full">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>Thumbnail Upload</span>
-                            <span>{thumbProgress}%</span>
-                          </div>
-                          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-indigo-500 transition-all duration-300"
-                              style={{ width: `${thumbProgress}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <ImageIcon className="h-12 w-12 text-gray-500 mb-3" />
-                      <p className="text-gray-300 mb-1">Drag & drop a thumbnail, or click to browse</p>
-                      <p className="text-sm text-gray-500">Optional - will be generated from video if not provided</p>
-                    </div>
-                  )}
-                </label>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gray-900/50 border-gray-800">
-            <CardHeader>
-              <CardTitle>Video Details</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-4">
-              <Input
-                label="Title *"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Enter video title"
-                maxLength={200}
-                disabled={isUploading}
-                error={error?.includes('title') ? error : undefined}
-              />
-              <Textarea
-                label="Description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Tell viewers about your video (optional)"
-                maxLength={5000}
-                rows={4}
-                disabled={isUploading}
-              />
-            </CardContent>
-          </Card>
-
-          {error && (
-            <div className="p-4 bg-red-900/30 border border-red-700 rounded-lg flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-red-400 mt-0.5" />
-              <p className="text-red-300 text-sm">{error}</p>
+            <div>
+              <h2 className="text-2xl font-bold text-white">Your Video is Ready!</h2>
+              <p className="mt-1 text-gray-400 text-sm">
+                &quot;{createdVideo.title}&quot; has been published successfully.
+              </p>
             </div>
-          )}
 
-          <div className="flex gap-4">
-            <Button
-              type="submit"
-              disabled={isUploading || !videoFile}
-              className="flex-1 py-3"
-              size="lg"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-5 w-5 mr-2" />
-                  Upload Video
-                </>
+            {createdVideo.thumbnail_url && (
+              <div className="max-w-md mx-auto aspect-video rounded-xl overflow-hidden border border-gray-800 bg-gray-950">
+                <img
+                  src={createdVideo.thumbnail_url}
+                  alt={createdVideo.title}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+              <Link href={`/video/${createdVideo.id}`}>
+                <Button className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white gap-2">
+                  <Eye className="h-4 w-4" />
+                  <span>Watch Video</span>
+                </Button>
+              </Link>
+
+              <Link href="/my-videos">
+                <Button variant="outline" className="w-full sm:w-auto border-gray-700 text-gray-300 hover:text-white hover:bg-gray-800">
+                  <span>Manage in My Videos</span>
+                </Button>
+              </Link>
+
+              <Button
+                variant="ghost"
+                onClick={handleReset}
+                className="w-full sm:w-auto text-gray-400 hover:text-white"
+              >
+                <span>Upload Another</span>
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <Card className="bg-gray-900/90 border-gray-800 shadow-2xl">
+            <CardContent className="pt-6">
+              {error && (
+                <div className="mb-6 flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+                  <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
               )}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                cancelUploads()
-                window.location.href = '/'
-              }}
-              disabled={isUploading}
-              className="py-3"
-              size="lg"
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+
+              <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Video File Input */}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-200 mb-2">
+                    Video File <span className="text-red-400">*</span>
+                  </label>
+
+                  {videoFile ? (
+                    <div className="flex items-center justify-between p-4 rounded-xl bg-gray-850 border border-gray-750">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0">
+                          <FileVideo className="h-6 w-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{videoFile.name}</p>
+                          <p className="text-xs text-gray-400">
+                            {formatFileSize(videoFile.size)} • {videoFile.type || 'Video'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removeVideo}
+                        disabled={isUploading}
+                        className="text-gray-400 hover:text-rose-400 p-1.5 rounded-lg transition-colors"
+                        aria-label="Remove video"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        if (e.dataTransfer.files?.[0]) {
+                          handleVideoSelect(e.dataTransfer.files[0])
+                        }
+                      }}
+                      className="border-2 border-dashed border-gray-700 hover:border-indigo-500/70 rounded-2xl p-8 text-center cursor-pointer transition-colors bg-gray-950/40 hover:bg-indigo-950/10"
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) handleVideoSelect(e.target.files[0])
+                        }}
+                      />
+                      <div className="mx-auto w-12 h-12 rounded-xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center mb-3">
+                        <UploadIcon className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm font-medium text-white">
+                        Click to select or drag and drop video file
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        MP4, WebM, or MOV up to 2 GB
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Title */}
+                <div>
+                  <label htmlFor="title" className="block text-sm font-semibold text-gray-200 mb-2">
+                    Title <span className="text-red-400">*</span>
+                  </label>
+                  <Input
+                    id="title"
+                    type="text"
+                    required
+                    disabled={isUploading}
+                    placeholder="Enter an engaging video title..."
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label htmlFor="description" className="block text-sm font-semibold text-gray-200 mb-2">
+                    Description
+                  </label>
+                  <Textarea
+                    id="description"
+                    rows={4}
+                    disabled={isUploading}
+                    placeholder="Tell viewers what your video is about..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="bg-gray-800/80 border-gray-700 text-white placeholder-gray-500 focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Thumbnail Picker */}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-200 mb-2">
+                    Custom Thumbnail (Optional)
+                  </label>
+
+                  {thumbnailPreview ? (
+                    <div className="flex items-center gap-4 p-3 rounded-xl bg-gray-850 border border-gray-750">
+                      <div className="w-24 aspect-video rounded-lg overflow-hidden bg-gray-900 border border-gray-700 shrink-0">
+                        <img
+                          src={thumbnailPreview}
+                          alt="Thumbnail preview"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-white truncate">{thumbnailFile?.name}</p>
+                        <p className="text-[11px] text-gray-400">
+                          {thumbnailFile ? formatFileSize(thumbnailFile.size) : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removeThumbnail}
+                        disabled={isUploading}
+                        className="text-gray-400 hover:text-rose-400 p-1.5 rounded-lg transition-colors"
+                        aria-label="Remove thumbnail"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => thumbInputRef.current?.click()}
+                      className="border border-dashed border-gray-750 hover:border-gray-600 rounded-xl p-4 text-center cursor-pointer transition-colors bg-gray-950/30 flex items-center justify-center gap-3"
+                    >
+                      <input
+                        ref={thumbInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) handleThumbnailSelect(e.target.files[0])
+                        }}
+                      />
+                      <ImageIcon className="h-5 w-5 text-gray-400" />
+                      <span className="text-xs text-gray-300">
+                        Upload custom thumbnail (JPG, PNG, WebP up to 5MB)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Visibility Selection */}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-200 mb-2">
+                    Visibility
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      disabled={isUploading}
+                      onClick={() => setVisibility('public')}
+                      className={cn(
+                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        visibility === 'public'
+                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
+                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                      )}
+                    >
+                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
+                        <Globe className="h-4 w-4 text-indigo-400" />
+                        <span>Public</span>
+                      </div>
+                      <span className="text-xs text-gray-400 leading-normal">
+                        Visible on home page and playable by everyone
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUploading}
+                      onClick={() => setVisibility('unlisted')}
+                      className={cn(
+                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        visibility === 'unlisted'
+                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
+                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                      )}
+                    >
+                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
+                        <Link2 className="h-4 w-4 text-amber-400" />
+                        <span>Unlisted</span>
+                      </div>
+                      <span className="text-xs text-gray-400 leading-normal">
+                        Anyone with the link can watch; hidden from search
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUploading}
+                      onClick={() => setVisibility('private')}
+                      className={cn(
+                        'flex flex-col text-left p-3.5 rounded-xl border transition-all',
+                        visibility === 'private'
+                          ? 'border-indigo-500 bg-indigo-950/20 text-white ring-1 ring-indigo-500'
+                          : 'border-gray-800 bg-gray-850/50 text-gray-400 hover:border-gray-700'
+                      )}
+                    >
+                      <div className="flex items-center gap-2 font-medium text-sm text-white mb-1">
+                        <Lock className="h-4 w-4 text-rose-400" />
+                        <span>Private</span>
+                      </div>
+                      <span className="text-xs text-gray-400 leading-normal">
+                        Only you can view and play this video
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Upload Progress */}
+                {isUploading && (
+                  <div className="space-y-2 p-4 rounded-xl bg-gray-850 border border-gray-750">
+                    <div className="flex justify-between text-xs text-gray-300 font-medium">
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+                        {uploadStage}
+                      </span>
+                      <span>{uploadPercent}%</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-gray-700 overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-600 transition-all duration-300 rounded-full"
+                        style={{ width: `${uploadPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <div className="pt-2 flex justify-end">
+                  <Button
+                    type="submit"
+                    disabled={isUploading || !videoFile}
+                    className="w-full sm:w-auto px-8 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 transition-colors gap-2"
+                  >
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadIcon className="h-4 w-4" />
+                        <span>Publish Video</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
-}
-
-function getVideoDuration(file: File): Promise<number> {
-  return new Promise((resolve) => {
-    const video = document.createElement('video')
-    video.preload = 'metadata'
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(video.src)
-      resolve(video.duration)
-    }
-    video.onerror = () => {
-      URL.revokeObjectURL(video.src)
-      resolve(0)
-    }
-    video.src = URL.createObjectURL(file)
-  })
 }

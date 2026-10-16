@@ -1,29 +1,39 @@
-export interface Video {
-  id: string
-  title: string
-  description: string | null
-  thumbnail_url: string | null
-  video_url: string
-  duration: number | null
-  file_size: number | null
-  mime_type: string | null
-  storage_path: string
-  thumbnail_path: string | null
-  created_at: string
-  updated_at: string
+import type { VideoVisibility, ProfileRow, VideoRow } from './database'
+
+export type { VideoVisibility, ProfileRow, VideoRow }
+
+export interface Profile extends ProfileRow {}
+
+export interface Video extends VideoRow {
+  profiles?: Profile | null
+  // Helper alias if joined as profile
+  profile?: Profile | null
+  // Private signed playback url if applicable
+  signed_playback_url?: string | null
 }
 
 export interface VideoUpload {
   title: string
-  description: string
+  description?: string
+  visibility: VideoVisibility
   file: File
-  thumbnail?: File
+  thumbnail?: File | null
+}
+
+export interface VideoUpdatePayload {
+  title?: string
+  description?: string | null
+  visibility?: VideoVisibility
+  thumbnail_url?: string | null
+  thumbnail_path?: string | null
 }
 
 export interface UploadProgress {
+  stage: 'idle' | 'validating' | 'uploading-video' | 'uploading-thumbnail' | 'saving' | 'complete'
+  percentage: number
   loaded: number
   total: number
-  percentage: number
+  message?: string
 }
 
 export interface VideoPlayerState {
@@ -42,6 +52,8 @@ export interface SearchParams {
   query?: string
   page?: number
   limit?: number
+  visibility?: VideoVisibility
+  userId?: string
 }
 
 export interface ApiResponse<T> {

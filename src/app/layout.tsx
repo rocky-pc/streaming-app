@@ -5,6 +5,8 @@ import { Navbar } from '@/components/layout/Navbar'
 import { Footer } from '@/components/layout/Footer'
 import { siteConfig } from '@/config/site'
 import { PWAProvider } from './PWAProvider'
+import { AuthProvider } from '@/context/AuthContext'
+import { ToastProvider } from '@/context/ToastContext'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -63,11 +65,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-title" content={siteConfig.name} />
         <meta name="theme-color" content="#030712" media="(prefers-color-scheme: dark)" />
       </head>
-      <body className="min-h-full flex flex-col bg-gray-950 text-white">
+      <body className="min-h-full flex flex-col bg-gray-950 text-white selection:bg-indigo-600 selection:text-white">
         <PWAProvider>
-          <Navbar />
-          <main className="flex-1 pt-16 pb-20">{children}</main>
-          <Footer />
+          <AuthProvider>
+            <ToastProvider>
+              <Navbar />
+              <main className="flex-1 pt-16 pb-16">{children}</main>
+              <Footer />
+            </ToastProvider>
+          </AuthProvider>
         </PWAProvider>
       </body>
     </html>
