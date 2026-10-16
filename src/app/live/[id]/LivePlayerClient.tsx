@@ -32,6 +32,7 @@ import {
 import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import type { LiveStreamRow, ProfileRow } from '@/types/database'
+import { LiveChat } from '@/components/live/LiveChat'
 
 interface LivePlayerClientProps {
   initialStream?: (LiveStreamRow & { profiles?: ProfileRow | null }) | null
@@ -544,45 +545,48 @@ export function LivePlayerClient({ initialStream, streamId }: LivePlayerClientPr
           </div>
         </div>
 
-        {/* Sidebar Column: Live Info & Channel (4 Cols) */}
+        {/* Sidebar Column: Live Chat & Stream Details (4 Cols) */}
         <div className="lg:col-span-4 space-y-4">
-          <div className="p-5 bg-[#181818] border border-[#272727] rounded-3xl space-y-4">
+          {/* YouTube-Style Live Chat */}
+          <LiveChat
+            streamId={streamId}
+            room={roomRef.current}
+            broadcasterId={stream?.user_id || ''}
+            className="h-[520px]"
+          />
+
+          {/* Broadcast Details Card */}
+          <div className="p-4 bg-[#181818] border border-[#272727] rounded-3xl space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-500">
               <Radio className="h-4 w-4" />
               <span>Broadcast Details</span>
             </div>
 
-            <div className="space-y-3 text-xs text-zinc-300">
-              <div className="flex justify-between py-1.5 border-b border-[#272727]">
+            <div className="space-y-2.5 text-xs text-zinc-300">
+              <div className="flex justify-between py-1 border-b border-[#272727]">
                 <span className="text-zinc-500">Status</span>
                 <span className={`font-semibold capitalize ${isEnded ? 'text-zinc-400' : 'text-emerald-400'}`}>
                   {isEnded ? 'Ended' : stream?.status || 'Live'}
                 </span>
               </div>
 
-              <div className="flex justify-between py-1.5 border-b border-[#272727]">
+              <div className="flex justify-between py-1 border-b border-[#272727]">
                 <span className="text-zinc-500">Visibility</span>
                 <span className="font-semibold capitalize text-white">
                   {stream?.visibility || 'Public'}
                 </span>
               </div>
 
-              <div className="flex justify-between py-1.5 border-b border-[#272727]">
+              <div className="flex justify-between py-1 border-b border-[#272727]">
                 <span className="text-zinc-500">Started</span>
                 <span className="text-zinc-300">
                   {stream?.started_at ? new Date(stream.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
                 </span>
               </div>
 
-              <div className="flex justify-between py-1.5">
+              <div className="flex justify-between py-1">
                 <span className="text-zinc-500">Realtime Network</span>
                 <span className="text-zinc-300">LiveKit Cloud WebRTC</span>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <div className="p-3 bg-[#121212] rounded-xl border border-[#272727] text-[11px] text-zinc-400 leading-normal">
-                You are tuned in to a real-time, low-latency stream. Audio and video are transmitted directly through WebRTC.
               </div>
             </div>
           </div>

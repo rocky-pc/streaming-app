@@ -64,7 +64,7 @@ export function HomePageClient({
     setPage(1)
   }, [initialVideos, initialHasMore, initialTotal, initialQuery])
 
-  // Periodic refresh for live streams
+  // Periodic refresh & focus refresh for live streams to immediately eliminate ended ghosts
   useEffect(() => {
     const fetchLive = async () => {
       try {
@@ -80,8 +80,13 @@ export function HomePageClient({
       }
     }
 
-    const interval = setInterval(fetchLive, 20000)
-    return () => clearInterval(interval)
+    const interval = setInterval(fetchLive, 8000)
+    window.addEventListener('focus', fetchLive)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', fetchLive)
+    }
   }, [])
 
   const handleChipClick = async (chip: string) => {

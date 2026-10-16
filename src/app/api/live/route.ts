@@ -31,7 +31,50 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message, data: [] }, { status: 500 })
     }
 
-    return NextResponse.json({ data: streams || [] })
+    if (!streams || streams.length === 0 || status !== 'live') {
+      return NextResponse.json({ data: streams || [] })
+    }
+
+    // Auto-prune ghost streams: verify active LiveKit rooms
+    const livekitHost = (process.env.NEXT_PUBLIC_LIVEKIT_URL || 'https://stream-flow-8560l64p.livekit.cloud')
+      .replace(/^wss:\/\//i, 'https://')
+      .replace(/^ws:\/\//i, 'http://')
+    const livekitApiKey = process.env.LIVEKIT_API_KEY || 'APID9m8XgypZbA4'
+    const livekitApiSecret = process.env.LIVEKIT_API_SECRET || 'N2RpJ7xVbyNfZnd3bzY1yQ6CZPoVTLGRS3cqYnnF6qO'
+
+    try {
+      const { RoomServiceClient } = await import('livekit-server-sdk')
+      const roomService = new RoomServiceClient(livekitHost, livekitApiKey, livekitApiSecret)
+      const activeRooms = await roomService.listRooms()
+      const activeRoomNames = new Set(activeRooms.map((r) => r.name))
+
+      const verifiedStreams = []
+      const ghostStreamIds: string[] = []
+      const now = Date.now()
+
+      for (const s of streams) {
+        const streamStartTime = s.started_at ? new Date(s.started_at).getTime() : now
+        const isFresh = now - streamStartTime < 45000 // 45s grace period
+
+        if (activeRoomNames.has(s.room_name) || isFresh) {
+          verifiedStreams.push(s)
+        } else {
+          ghostStreamIds.push(s.id)
+        }
+      }
+
+      if (ghostStreamIds.length > 0) {
+        supabaseService
+          .from('live_streams')
+          .update({ status: 'ended', ended_at: new Date().toISOString() })
+          .in('id', ghostStreamIds)
+          .then(() => {})
+      }
+
+      return NextResponse.json({ data: verifiedStreams })
+    } catch {
+      return NextResponse.json({ data: streams || [] })
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch live streams'
     return NextResponse.json({ error: message, data: [] }, { status: 500 })

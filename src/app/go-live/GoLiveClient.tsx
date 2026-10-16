@@ -12,7 +12,6 @@ import {
   LocalAudioTrack,
   createLocalVideoTrack,
   createLocalAudioTrack,
-  ConnectionState,
 } from 'livekit-client'
 import {
   Radio,
@@ -32,7 +31,11 @@ import {
   Eye,
   StopCircle,
   ExternalLink,
+  ArrowLeft,
+  MessageSquare,
+  Sparkles,
 } from 'lucide-react'
+import { LiveChat } from '@/components/live/LiveChat'
 
 interface MediaDeviceInfoState {
   videoInputs: MediaDeviceInfo[]
@@ -63,9 +66,16 @@ export function GoLiveClient() {
   const [streamId, setStreamId] = useState<string | null>(null)
   const [isLive, setIsLive] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isEnding, setIsEnding] = useState(false)
   const [liveDuration, setLiveDuration] = useState(0)
   const [viewerCount, setViewerCount] = useState(0)
+  const [peakViewers, setPeakViewers] = useState(0)
   const [copiedLink, setCopiedLink] = useState(false)
+
+  // Dialog & Tab states
+  const [showExitConfirmModal, setShowExitConfirmModal] = useState(false)
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
+  const [activeRightTab, setActiveRightTab] = useState<'details' | 'chat'>('details')
 
   // Refs
   const previewVideoRef = useRef<HTMLVideoElement>(null)
@@ -114,17 +124,14 @@ export function GoLiveClient() {
         throw new Error('Your browser does not support camera or microphone access.')
       }
 
-      // Stop existing tracks before recreating
       stopLocalTracks()
 
-      // Create video track
       const videoTrack = await createLocalVideoTrack({
         deviceId: selectedVideoDeviceId ? { exact: selectedVideoDeviceId } : undefined,
         resolution: { width: 1280, height: 720, frameRate: 30 },
       })
       localVideoTrackRef.current = videoTrack
 
-      // Create audio track
       const audioTrack = await createLocalAudioTrack({
         deviceId: selectedAudioDeviceId ? { exact: selectedAudioDeviceId } : undefined,
         echoCancellation: true,
@@ -132,12 +139,10 @@ export function GoLiveClient() {
       })
       localAudioTrackRef.current = audioTrack
 
-      // Attach video track to preview element
       if (previewVideoRef.current) {
         videoTrack.attach(previewVideoRef.current)
       }
 
-      // Enumerate devices
       const allDevices = await navigator.mediaDevices.enumerateDevices()
       const videoInputs = allDevices.filter((d) => d.kind === 'videoinput')
       const audioInputs = allDevices.filter((d) => d.kind === 'audioinput')
@@ -156,9 +161,9 @@ export function GoLiveClient() {
       setHasPermission(false)
       if (err instanceof Error) {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          setDeviceError('Camera or microphone permission was denied. Please allow camera and microphone permissions in your browser settings to go live.')
+          setDeviceError('Camera or microphone permission was denied. Please allow permissions in your browser to go live.')
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          setDeviceError('No camera or microphone device was found. Please plug in a webcam or microphone.')
+          setDeviceError('No camera or microphone device found. Please connect your webcam or mic.')
         } else {
           setDeviceError(err.message || 'Unable to access your camera and microphone.')
         }
@@ -185,6 +190,38 @@ export function GoLiveClient() {
       }
     }
   }, [initializeDevicesAndPreview, stopLocalTracks])
+
+  // Browser unload / leave warning protection and beacon cleanup
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isLive) {
+        e.preventDefault()
+        e.returnValue = ''
+        return ''
+      }
+    }
+
+    const handlePageHide = () => {
+      if (isLive && streamId) {
+        try {
+          const blob = new Blob([JSON.stringify({ streamId, action: 'end' })], {
+            type: 'application/json',
+          })
+          navigator.sendBeacon('/api/livekit/token', blob)
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('pagehide', handlePageHide)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('pagehide', handlePageHide)
+    }
+  }, [isLive, streamId])
 
   // Toggle Camera
   const toggleCamera = async () => {
@@ -293,7 +330,7 @@ export function GoLiveClient() {
       const newStream = createData.data
       setStreamId(newStream.id)
 
-      // 2. Request Broadcaster Token from /api/livekit/token (or Supabase Edge Function)
+      // 2. Request Broadcaster Token
       let tokenData: { token: string; livekitUrl?: string } | null = null
       try {
         const tokenRes = await fetch('/api/livekit/token', {
@@ -317,9 +354,7 @@ export function GoLiveClient() {
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
         const edgeRes = await fetch(`${supabaseUrl}/functions/v1/livekit-token`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             streamId: newStream.id,
             action: 'broadcast',
@@ -342,10 +377,6 @@ export function GoLiveClient() {
 
       // 3. Connect to LiveKit Room using official client SDK
       const livekitUrl = tokenData.livekitUrl || process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://stream-flow-8560l64p.livekit.cloud'
-      if (!livekitUrl) {
-        throw new Error('LiveKit WebSocket connection URL is missing.')
-      }
-
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
@@ -355,6 +386,7 @@ export function GoLiveClient() {
       room.on(RoomEvent.Connected, () => {
         setIsLive(true)
         setIsConnecting(false)
+        setActiveRightTab('chat') // Auto switch to live chat once live!
         addToast('You are now LIVE on StreamFlow!', 'success')
 
         // Start duration counter
@@ -365,7 +397,11 @@ export function GoLiveClient() {
       })
 
       room.on(RoomEvent.ParticipantConnected, () => {
-        setViewerCount((prev) => prev + 1)
+        setViewerCount((prev) => {
+          const updated = prev + 1
+          setPeakViewers((peak) => Math.max(peak, updated))
+          return updated
+        })
       })
 
       room.on(RoomEvent.ParticipantDisconnected, () => {
@@ -404,12 +440,9 @@ export function GoLiveClient() {
     }
   }
 
-  // Broadcaster Ends Stream: "End Live"
-  const handleEndLive = async () => {
-    if (!confirm('Are you sure you want to end your live broadcast?')) {
-      return
-    }
-
+  // Broadcaster Cuts Stream: "End Live"
+  const handleEndLive = async (skipSummary = false) => {
+    setIsEnding(true)
     try {
       // 1. Notify server to mark stream as ended
       if (streamId) {
@@ -437,11 +470,27 @@ export function GoLiveClient() {
       }
 
       setIsLive(false)
-      addToast('Your live stream has ended.', 'info')
-      router.push(streamId ? `/live/${streamId}` : '/')
+      setIsEnding(false)
+      addToast('Live broadcast ended successfully.', 'info')
+
+      if (skipSummary) {
+        router.push('/')
+      } else {
+        setShowSummaryModal(true)
+      }
     } catch (err: unknown) {
       console.error('Error ending live stream:', err)
-      addToast('Error ending stream cleanly. Redirecting...', 'error')
+      setIsEnding(false)
+      router.push('/')
+    }
+  }
+
+  // Back Navigation Handler
+  const handleBackNavigation = () => {
+    if (isLive) {
+      setShowExitConfirmModal(true)
+    } else {
+      stopLocalTracks()
       router.push('/')
     }
   }
@@ -468,31 +517,44 @@ export function GoLiveClient() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] bg-[#0f0f0f] text-[#f1f1f1] px-4 py-6 max-w-7xl mx-auto">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-[#272727] gap-4">
-        <div>
+    <div className="min-h-[calc(100vh-3.5rem)] bg-[#0f0f0f] text-[#f1f1f1] px-4 py-4 max-w-7xl mx-auto">
+      {/* Studio Top Bar with Back Navigation */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#272727] gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleBackNavigation}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1c1c1c] hover:bg-[#282828] text-zinc-300 hover:text-white text-xs font-semibold transition-colors border border-[#303030]"
+            title="Exit studio"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Exit Studio</span>
+          </button>
+
           <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-red-600/10 text-red-500">
-              <Radio className="h-6 w-6 animate-pulse" />
+            <span className="p-1.5 rounded-lg bg-red-600/10 text-red-500">
+              <Radio className="h-5 w-5 animate-pulse" />
             </span>
-            <h1 className="text-2xl font-bold text-white tracking-tight">StreamFlow Live Studio</h1>
+            <h1 className="text-xl font-bold text-white tracking-tight">StreamFlow Studio</h1>
           </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Broadcast high-definition video directly from your browser powered by LiveKit Cloud
-          </p>
         </div>
 
+        {/* Live Status Header Indicators */}
         {isLive && streamId && (
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-wider animate-pulse">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-wider animate-pulse shadow-md">
               <span className="w-2 h-2 rounded-full bg-white" />
               LIVE {formatDuration(liveDuration)}
             </div>
 
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1c1c1c] border border-[#303030] text-zinc-300 text-xs font-medium rounded-full">
+              <Eye className="h-3.5 w-3.5 text-zinc-400" />
+              <span>{viewerCount} viewers</span>
+            </div>
+
             <button
               onClick={handleCopyLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs font-medium rounded-full transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1 bg-[#272727] hover:bg-[#383838] text-white text-xs font-medium rounded-full transition-colors border border-[#383838]"
             >
               {copiedLink ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Share2 className="h-3.5 w-3.5" />}
               <span>{copiedLink ? 'Copied' : 'Share Link'}</span>
@@ -501,18 +563,29 @@ export function GoLiveClient() {
             <Link
               href={`/live/${streamId}`}
               target="_blank"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-zinc-300 hover:text-white text-xs font-medium rounded-full transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1 bg-[#272727] hover:bg-[#383838] text-zinc-300 hover:text-white text-xs font-medium rounded-full transition-colors border border-[#383838]"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               <span>Watch Room</span>
             </Link>
+
+            {/* Prominent Quick Cut Button in Header */}
+            <button
+              type="button"
+              onClick={() => handleEndLive(false)}
+              disabled={isEnding}
+              className="flex items-center gap-1.5 px-3.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-full transition-colors shadow-md"
+            >
+              {isEnding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <StopCircle className="h-3.5 w-3.5" />}
+              <span>Cut Stream</span>
+            </button>
           </div>
         )}
       </div>
 
       {/* Permission or Device Error Alert */}
       {deviceError && (
-        <div className="my-5 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300">
+        <div className="my-4 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300">
           <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-rose-400" />
           <div className="flex-1 space-y-1">
             <p className="font-semibold text-rose-200">Device Access Issue</p>
@@ -528,8 +601,8 @@ export function GoLiveClient() {
       )}
 
       {/* Main Studio Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
-        {/* Left Column: Camera Preview & Controls (7 Cols) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
+        {/* Left Column: Camera Preview & Local Controls (7 Cols) */}
         <div className="lg:col-span-7 space-y-4">
           {/* 16:9 Video Preview Container */}
           <div className="relative aspect-video w-full bg-black rounded-3xl overflow-hidden border border-[#272727] shadow-2xl flex items-center justify-center">
@@ -662,155 +735,293 @@ export function GoLiveClient() {
           </div>
         </div>
 
-        {/* Right Column: Stream Configuration & Action Controls (5 Cols) */}
+        {/* Right Column: Tabbed Interface (Details / Live Chat) (5 Cols) */}
         <div className="lg:col-span-5 space-y-4">
-          <div className="p-6 bg-[#181818] border border-[#272727] rounded-3xl shadow-xl space-y-5">
-            <div>
-              <h2 className="text-lg font-bold text-white">Stream Details</h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Set up your broadcast metadata before streaming live to viewers
-              </p>
+          {/* Tab Navigation if Live */}
+          {isLive && (
+            <div className="flex items-center gap-2 p-1 bg-[#181818] border border-[#272727] rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setActiveRightTab('chat')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-xl transition-all ${
+                  activeRightTab === 'chat'
+                    ? 'bg-red-600 text-white shadow-md'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Live Chat</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveRightTab('details')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-xl transition-all ${
+                  activeRightTab === 'details'
+                    ? 'bg-[#272727] text-white shadow-md'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Stream Info</span>
+              </button>
             </div>
+          )}
 
-            {/* Title */}
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="stream-title">
-                Stream Title <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="stream-title"
-                type="text"
-                required
-                disabled={isLive}
-                placeholder="e.g., Live Coding & Q&A Stream"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full bg-[#121212] border border-[#383838] text-white text-sm rounded-xl px-3.5 py-2.5 focus:border-[#3ea6ff] focus:outline-none placeholder-zinc-500"
-              />
-            </div>
-
-            {/* Description */}
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="stream-desc">
-                Description (Optional)
-              </label>
-              <textarea
-                id="stream-desc"
-                rows={3}
-                disabled={isLive}
-                placeholder="What is this live stream about?"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-[#121212] border border-[#383838] text-white text-sm rounded-xl px-3.5 py-2.5 focus:border-[#3ea6ff] focus:outline-none placeholder-zinc-500 resize-none"
-              />
-            </div>
-
-            {/* Visibility Option */}
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1.5">Visibility</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  disabled={isLive}
-                  onClick={() => setVisibility('public')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
-                    visibility === 'public'
-                      ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
-                      : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  <Globe className="h-4 w-4 mb-1" />
-                  <span>Public</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isLive}
-                  onClick={() => setVisibility('unlisted')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
-                    visibility === 'unlisted'
-                      ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
-                      : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  <LinkIcon className="h-4 w-4 mb-1" />
-                  <span>Unlisted</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isLive}
-                  onClick={() => setVisibility('private')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
-                    visibility === 'private'
-                      ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
-                      : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  <Lock className="h-4 w-4 mb-1" />
-                  <span>Private</span>
-                </button>
+          {/* Tab Content: Live Chat */}
+          {isLive && activeRightTab === 'chat' && streamId ? (
+            <LiveChat
+              streamId={streamId}
+              room={roomRef.current}
+              broadcasterId={user?.id || ''}
+              isBroadcaster={true}
+              className="h-[540px]"
+            />
+          ) : (
+            /* Stream Setup & Actions Card */
+            <div className="p-6 bg-[#181818] border border-[#272727] rounded-3xl shadow-xl space-y-5">
+              <div>
+                <h2 className="text-lg font-bold text-white">Stream Details</h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Set up your broadcast metadata before streaming live to viewers
+                </p>
               </div>
-            </div>
 
-            {/* Prominent Action Button: Go Live or End Live */}
-            <div className="pt-2">
-              {!isLive ? (
-                <button
-                  type="button"
-                  onClick={handleGoLive}
-                  disabled={isConnecting || isRequestingPermission || !hasPermission}
-                  className="w-full bg-[#ff0000] hover:bg-[#cc0000] disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-bold py-3.5 rounded-full transition-all flex items-center justify-center gap-2 text-sm shadow-xl active:scale-[0.99]"
-                >
-                  {isConnecting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Connecting to LiveKit Cloud...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Radio className="h-4 w-4" />
-                      <span>Go Live</span>
-                    </>
-                  )}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleEndLive}
-                  className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-full transition-all flex items-center justify-center gap-2 text-sm shadow-xl active:scale-[0.99]"
-                >
-                  <StopCircle className="h-4 w-4" />
-                  <span>End Live Stream</span>
-                </button>
-              )}
-            </div>
-
-            {/* Broadcaster Profile Card */}
-            <div className="pt-4 border-t border-[#272727] flex items-center gap-3">
-              {profile?.avatar_url ? (
-                <img
-                  src={profile.avatar_url}
-                  alt={profile.display_name || 'Broadcaster'}
-                  className="w-10 h-10 rounded-full object-cover ring-1 ring-zinc-700 shrink-0"
+              {/* Title */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="stream-title">
+                  Stream Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="stream-title"
+                  type="text"
+                  required
+                  disabled={isLive}
+                  placeholder="e.g., Live Coding & Q&A Stream"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full bg-[#121212] border border-[#383838] text-white text-sm rounded-xl px-3.5 py-2.5 focus:border-[#3ea6ff] focus:outline-none placeholder-zinc-500"
                 />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-white shrink-0">
-                  {(profile?.display_name || user?.email || 'U').charAt(0).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-white truncate">
-                  {profile?.display_name || user?.user_metadata?.display_name || 'Creator'}
-                </p>
-                <p className="text-[11px] text-zinc-400 truncate">
-                  @{profile?.username || user?.user_metadata?.username || 'user'}
-                </p>
               </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5" htmlFor="stream-desc">
+                  Description (Optional)
+                </label>
+                <textarea
+                  id="stream-desc"
+                  rows={3}
+                  disabled={isLive}
+                  placeholder="What is this live stream about?"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full bg-[#121212] border border-[#383838] text-white text-sm rounded-xl px-3.5 py-2.5 focus:border-[#3ea6ff] focus:outline-none placeholder-zinc-500 resize-none"
+                />
+              </div>
+
+              {/* Visibility Option */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5">Visibility</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    disabled={isLive}
+                    onClick={() => setVisibility('public')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
+                      visibility === 'public'
+                        ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
+                        : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <Globe className="h-4 w-4 mb-1" />
+                    <span>Public</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isLive}
+                    onClick={() => setVisibility('unlisted')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
+                      visibility === 'unlisted'
+                        ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
+                        : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <LinkIcon className="h-4 w-4 mb-1" />
+                    <span>Unlisted</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isLive}
+                    onClick={() => setVisibility('private')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-medium transition-all ${
+                      visibility === 'private'
+                        ? 'border-[#ff0000] bg-[#ff0000]/10 text-white'
+                        : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <Lock className="h-4 w-4 mb-1" />
+                    <span>Private</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Prominent Action Button: Go Live or End Live */}
+              <div className="pt-2">
+                {!isLive ? (
+                  <button
+                    type="button"
+                    onClick={handleGoLive}
+                    disabled={isConnecting || isRequestingPermission || !hasPermission}
+                    className="w-full bg-[#ff0000] hover:bg-[#cc0000] disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-bold py-3.5 rounded-full transition-all flex items-center justify-center gap-2 text-sm shadow-xl active:scale-[0.99]"
+                  >
+                    {isConnecting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Connecting to LiveKit Cloud...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Radio className="h-4 w-4" />
+                        <span>Go Live</span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleEndLive(false)}
+                    disabled={isEnding}
+                    className="w-full bg-rose-600 hover:bg-rose-700 disabled:bg-rose-900 text-white font-bold py-3.5 rounded-full transition-all flex items-center justify-center gap-2 text-sm shadow-xl active:scale-[0.99]"
+                  >
+                    {isEnding ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Ending Stream...</span>
+                      </>
+                    ) : (
+                      <>
+                        <StopCircle className="h-4 w-4" />
+                        <span>End Live Stream</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {/* Broadcaster Profile Card */}
+              <div className="pt-4 border-t border-[#272727] flex items-center gap-3">
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={profile.display_name || 'Broadcaster'}
+                    className="w-10 h-10 rounded-full object-cover ring-1 ring-zinc-700 shrink-0"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-white shrink-0">
+                    {(profile?.display_name || user?.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-white truncate">
+                    {profile?.display_name || user?.user_metadata?.display_name || 'Creator'}
+                  </p>
+                  <p className="text-[11px] text-zinc-400 truncate">
+                    @{profile?.username || user?.user_metadata?.username || 'user'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Confirmation Modal when Streamer tries to Back or Exit while live */}
+      {showExitConfirmModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1c1c1c] border border-[#303030] rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-500">
+              <div className="w-10 h-10 rounded-full bg-rose-500/10 flex items-center justify-center">
+                <StopCircle className="h-6 w-6" />
+              </div>
+              <h3 className="text-lg font-bold text-white">Cut & Exit Stream?</h3>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              You are currently broadcasting live. Leaving this page will immediately end your broadcast and disconnect all viewers.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowExitConfirmModal(false)}
+                className="px-4 py-2 rounded-full bg-[#282828] hover:bg-[#383838] text-zinc-300 hover:text-white text-xs font-semibold transition-colors"
+              >
+                Keep Streaming
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitConfirmModal(false)
+                  handleEndLive(true)
+                }}
+                className="px-4 py-2 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors shadow-md"
+              >
+                End Stream & Exit
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Stream Ended Summary Modal (Guarantees clean redirect) */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1c1c1c] border border-[#303030] rounded-3xl max-w-md w-full p-6 text-center space-y-5 shadow-2xl">
+            <div className="w-14 h-14 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+              <Check className="h-7 w-7" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold text-white">Stream Finished</h3>
+              <p className="text-xs text-zinc-400 mt-1">Here is a quick summary of your broadcast:</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 bg-[#141414] p-4 rounded-2xl border border-[#272727]">
+              <div>
+                <span className="text-[11px] text-zinc-500 block">Duration</span>
+                <span className="text-base font-bold text-white">{formatDuration(liveDuration)}</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-zinc-500 block">Peak Viewers</span>
+                <span className="text-base font-bold text-white">{peakViewers || viewerCount}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => router.push('/')}
+                className="w-full py-3 bg-[#ff0000] hover:bg-[#cc0000] text-white text-xs font-bold rounded-full transition-colors shadow-md"
+              >
+                Return to Home
+              </button>
+
+              {streamId && (
+                <Link
+                  href={`/live/${streamId}`}
+                  className="w-full py-2.5 bg-[#282828] hover:bg-[#383838] text-zinc-300 hover:text-white text-xs font-semibold rounded-full transition-colors block"
+                >
+                  View Watch Page
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
