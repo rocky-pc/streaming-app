@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 
-// GET: Fetch recent chat messages for a live stream
+function getServiceRoleClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return createClient<any>(supabaseUrl, supabaseServiceKey)
+}
+
+// GET: Fetch recent chat messages and current chat economics
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -12,14 +19,55 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'streamId is required' }, { status: 400 })
     }
 
-    // If test stream, return empty or mock messages
-    if (streamId === 'test') {
-      return NextResponse.json({ messages: [] })
+    const supabaseService = getServiceRoleClient()
+
+    // 1. Fetch current platform economics
+    const { data: settings } = await supabaseService
+      .from('platform_settings')
+      .select('key, value')
+
+    const settingsMap: Record<string, string> = {}
+    for (const s of settings || []) {
+      settingsMap[s.key] = s.value
+    }
+    const chatCost = parseInt(settingsMap['chat_cost_per_message'] || '2', 10)
+    const streamerPercent = parseInt(settingsMap['streamer_revenue_percent'] || '70', 10)
+
+    // Check optional authenticated user status
+    let userCoins: number | null = null
+    let userChatEnabled: boolean = true
+
+    try {
+      const supabaseServer = await createSupabaseServerClient()
+      const { data: { user } } = await supabaseServer.auth.getUser()
+      if (user) {
+        const { data: userProfile } = await supabaseService
+          .from('profiles')
+          .select('coin_balance, chat_enabled')
+          .eq('id', user.id)
+          .single()
+
+        if (userProfile) {
+          userCoins = userProfile.coin_balance ?? 0
+          userChatEnabled = userProfile.chat_enabled ?? true
+        }
+      }
+    } catch {
+      // Ignore if unauthenticated
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
-    const supabaseService = createClient(supabaseUrl, supabaseServiceKey)
+    // If test stream, return empty messages with economics
+    if (streamId === 'test') {
+      return NextResponse.json({
+        messages: [],
+        economics: {
+          chatCost,
+          streamerPercent,
+          userCoins,
+          userChatEnabled,
+        },
+      })
+    }
 
     const { data: messages, error } = await supabaseService
       .from('live_chat_messages')
@@ -32,14 +80,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message, messages: [] }, { status: 500 })
     }
 
-    return NextResponse.json({ messages: messages || [] })
+    return NextResponse.json({
+      messages: messages || [],
+      economics: {
+        chatCost,
+        streamerPercent,
+        userCoins,
+        userChatEnabled,
+      },
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch chat messages'
     return NextResponse.json({ error: message, messages: [] }, { status: 500 })
   }
 }
 
-// POST: Send a new chat message
+// POST: Send a new chat message with coin deduction and streamer revenue distribution
 export async function POST(request: NextRequest) {
   try {
     const supabaseServer = await createSupabaseServerClient()
@@ -63,6 +119,36 @@ export async function POST(request: NextRequest) {
     }
 
     const cleanMessage = message.trim().slice(0, 300)
+    const supabaseService = getServiceRoleClient()
+
+    // 1. Verify user's chat permission and coin balance
+    const { data: senderProfile } = await supabaseService
+      .from('profiles')
+      .select('id, username, display_name, coin_balance, chat_enabled')
+      .eq('id', user.id)
+      .single()
+
+    if (senderProfile && senderProfile.chat_enabled === false) {
+      return NextResponse.json(
+        { error: 'Your live chat privileges have been disabled by an administrator.' },
+        { status: 403 }
+      )
+    }
+
+    // 2. Fetch platform economics
+    const { data: settings } = await supabaseService
+      .from('platform_settings')
+      .select('key, value')
+
+    const settingsMap: Record<string, string> = {}
+    for (const s of settings || []) {
+      settingsMap[s.key] = s.value
+    }
+
+    const chatCost = Math.max(0, parseInt(settingsMap['chat_cost_per_message'] || '0', 10))
+    const streamerPercent = Math.min(100, Math.max(0, parseInt(settingsMap['streamer_revenue_percent'] || '70', 10)))
+
+    let remainingCoins = senderProfile?.coin_balance ?? 50
 
     // Handle test room
     if (streamId === 'test') {
@@ -74,18 +160,86 @@ export async function POST(request: NextRequest) {
         created_at: new Date().toISOString(),
         profiles: {
           id: user.id,
-          username: user.user_metadata?.username || 'user',
-          display_name: user.user_metadata?.display_name || user.email || 'Viewer',
+          username: senderProfile?.username || user.user_metadata?.username || 'user',
+          display_name: senderProfile?.display_name || user.user_metadata?.display_name || 'Viewer',
           avatar_url: user.user_metadata?.avatar_url || null,
         },
       }
-      return NextResponse.json({ message: mockMsg }, { status: 201 })
+      return NextResponse.json({ message: mockMsg, remainingCoins }, { status: 201 })
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
-    const supabaseService = createClient(supabaseUrl, supabaseServiceKey)
+    // 3. Process coin deduction if chat charge is active
+    if (chatCost > 0) {
+      const currentCoins = senderProfile?.coin_balance ?? 0
+      if (currentCoins < chatCost) {
+        return NextResponse.json(
+          {
+            error: `Insufficient coins. Each message requires ${chatCost} coins (Your balance: ${currentCoins} coins).`,
+            requiredCoins: chatCost,
+            currentCoins,
+          },
+          { status: 402 }
+        )
+      }
 
+      remainingCoins = currentCoins - chatCost
+
+      // Deduct from viewer wallet
+      await supabaseService
+        .from('profiles')
+        .update({ coin_balance: remainingCoins })
+        .eq('id', user.id)
+
+      // Ledger entry for sender
+      await supabaseService.from('wallet_transactions').insert({
+        user_id: user.id,
+        amount: -chatCost,
+        type: 'chat_fee',
+        related_stream_id: streamId,
+        description: `Live chat message (${chatCost} coins)`,
+      })
+
+      // 4. Distribute percentage revenue share to streamer
+      try {
+        const { data: streamData } = await supabaseService
+          .from('live_streams')
+          .select('user_id, title')
+          .eq('id', streamId)
+          .single()
+
+        if (streamData && streamData.user_id && streamData.user_id !== user.id) {
+          const streamerEarnings = Math.floor(chatCost * (streamerPercent / 100))
+
+          if (streamerEarnings > 0) {
+            const { data: streamerProfile } = await supabaseService
+              .from('profiles')
+              .select('coin_balance')
+              .eq('id', streamData.user_id)
+              .single()
+
+            const currentStreamerCoins = streamerProfile?.coin_balance ?? 0
+            const newStreamerCoins = currentStreamerCoins + streamerEarnings
+
+            await supabaseService
+              .from('profiles')
+              .update({ coin_balance: newStreamerCoins })
+              .eq('id', streamData.user_id)
+
+            await supabaseService.from('wallet_transactions').insert({
+              user_id: streamData.user_id,
+              amount: streamerEarnings,
+              type: 'streamer_earning',
+              related_stream_id: streamId,
+              description: `Viewer chat revenue share (${streamerPercent}%)`,
+            })
+          }
+        }
+      } catch (streamerEarnErr) {
+        console.warn('Error crediting streamer coins:', streamerEarnErr)
+      }
+    }
+
+    // 5. Insert chat message into database
     const { data: newMsg, error: insertError } = await supabaseService
       .from('live_chat_messages')
       .insert({
@@ -103,7 +257,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    return NextResponse.json({ message: newMsg }, { status: 201 })
+    return NextResponse.json(
+      {
+        message: newMsg,
+        remainingCoins,
+        chatCost,
+      },
+      { status: 201 }
+    )
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal Server Error'
     return NextResponse.json({ error: message }, { status: 500 })

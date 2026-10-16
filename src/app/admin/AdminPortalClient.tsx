@@ -30,8 +30,17 @@ import {
   Sliders,
   Sparkles,
   Zap,
+  Coins,
+  DollarSign,
+  Percent,
+  Plus,
+  Minus,
+  Check,
+  ToggleLeft,
+  ToggleRight,
+  X,
 } from 'lucide-react'
-import { formatFileSize, formatRelativeTime, formatDuration } from '@/lib/utils'
+import { formatFileSize, formatRelativeTime, formatDuration, formatDate } from '@/lib/utils'
 
 interface AdminStats {
   activeStreams: number
@@ -53,6 +62,26 @@ interface HealthStatus {
     latencyMs: number
     error: string | null
   }
+}
+
+interface AdminUser {
+  id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  bio: string | null
+  coin_balance: number
+  chat_enabled: boolean
+  created_at: string
+  updated_at: string
+  videoCount?: number
+  streamCount?: number
+}
+
+interface PlatformEconomics {
+  signup_coin_bonus: number
+  chat_cost_per_message: number
+  streamer_revenue_percent: number
 }
 
 interface AdminStream {
@@ -114,7 +143,7 @@ interface AdminChat {
   } | null
 }
 
-type TabType = 'overview' | 'streams' | 'videos' | 'chats' | 'settings'
+type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'settings'
 
 export default function AdminPortalClient() {
   // Authentication State
@@ -133,13 +162,21 @@ export default function AdminPortalClient() {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [health, setHealth] = useState<HealthStatus | null>(null)
+  const [users, setUsers] = useState<AdminUser[]>([])
   const [streams, setStreams] = useState<AdminStream[]>([])
   const [videos, setVideos] = useState<AdminVideo[]>([])
   const [chats, setChats] = useState<AdminChat[]>([])
+  const [economics, setEconomics] = useState<PlatformEconomics>({
+    signup_coin_bonus: 50,
+    chat_cost_per_message: 2,
+    streamer_revenue_percent: 70,
+  })
+
   const [isLoadingData, setIsLoadingData] = useState(false)
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   // Filters
+  const [userSearch, setUserSearch] = useState('')
   const [streamFilter, setStreamFilter] = useState<'all' | 'live' | 'ended'>('all')
   const [streamSearch, setStreamSearch] = useState('')
   const [videoFilter, setVideoFilter] = useState<'all' | 'public' | 'unlisted' | 'private'>('all')
@@ -155,6 +192,21 @@ export default function AdminPortalClient() {
     roomName?: string
   } | null>(null)
   const [isExecutingAction, setIsExecutingAction] = useState(false)
+
+  // Manage Coins Modal State
+  const [managingCoinsUser, setManagingCoinsUser] = useState<AdminUser | null>(null)
+  const [coinActionType, setCoinActionType] = useState<'add' | 'remove' | 'set'>('add')
+  const [coinAmount, setCoinAmount] = useState<number>(50)
+  const [coinReason, setCoinReason] = useState<string>('')
+  const [isSubmittingCoins, setIsSubmittingCoins] = useState(false)
+
+  // Economics Edit State
+  const [settingsForm, setSettingsForm] = useState<PlatformEconomics>({
+    signup_coin_bonus: 50,
+    chat_cost_per_message: 2,
+    streamer_revenue_percent: 70,
+  })
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
 
   // Check auth status on mount
   useEffect(() => {
@@ -236,21 +288,38 @@ export default function AdminPortalClient() {
         setHealth(statsData.health)
       }
 
-      // 2. Fetch Streams
+      // 2. Fetch Users
+      const usersRes = await fetch('/api/admin/users')
+      if (usersRes.ok) {
+        const usersData = await usersRes.json()
+        setUsers(usersData.users || [])
+      }
+
+      // 3. Fetch Economics Settings
+      const settingsRes = await fetch('/api/admin/settings')
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json()
+        if (settingsData.settings) {
+          setEconomics(settingsData.settings)
+          setSettingsForm(settingsData.settings)
+        }
+      }
+
+      // 4. Fetch Streams
       const streamsRes = await fetch('/api/admin/streams')
       if (streamsRes.ok) {
         const streamsData = await streamsRes.json()
         setStreams(streamsData.streams || [])
       }
 
-      // 3. Fetch Videos
+      // 5. Fetch Videos
       const videosRes = await fetch('/api/admin/videos')
       if (videosRes.ok) {
         const videosData = await videosRes.json()
         setVideos(videosData.videos || [])
       }
 
-      // 4. Fetch Chats
+      // 6. Fetch Chats
       const chatsRes = await fetch('/api/admin/chats')
       if (chatsRes.ok) {
         const chatsData = await chatsRes.json()
@@ -269,6 +338,99 @@ export default function AdminPortalClient() {
       loadDashboardData()
     }
   }, [isAuthenticated, loadDashboardData])
+
+  // -------------------------------------------------------------
+  // USER LIST: LIVE CHAT ON/OFF SWITCH HANDLER
+  // -------------------------------------------------------------
+  const handleToggleUserChat = async (user: AdminUser) => {
+    const nextState = !user.chat_enabled
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, chat_enabled: nextState }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === user.id ? { ...u, chat_enabled: nextState } : u))
+        )
+        setActionNotice({
+          type: 'success',
+          message: `Live chat access ${nextState ? 'ENABLED' : 'DISABLED'} for @${user.username}`,
+        })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to toggle chat permission' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to communicate with server' })
+    }
+  }
+
+  // -------------------------------------------------------------
+  // USER WALLET: ADD / REMOVE COINS HANDLER
+  // -------------------------------------------------------------
+  const handleSaveCoins = async () => {
+    if (!managingCoinsUser) return
+    setIsSubmittingCoins(true)
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: managingCoinsUser.id,
+          coin_action: coinActionType,
+          coin_amount: Number(coinAmount),
+          reason: coinReason.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.user) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === managingCoinsUser.id ? { ...u, coin_balance: data.user.coin_balance } : u))
+        )
+        setActionNotice({
+          type: 'success',
+          message: `Updated @${managingCoinsUser.username} wallet to ${data.user.coin_balance} coins!`,
+        })
+        setManagingCoinsUser(null)
+        setCoinAmount(50)
+        setCoinReason('')
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to update coins' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to update wallet coins' })
+    } finally {
+      setIsSubmittingCoins(false)
+    }
+  }
+
+  // -------------------------------------------------------------
+  // PLATFORM ECONOMICS SETTINGS HANDLER
+  // -------------------------------------------------------------
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSavingSettings(true)
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settingsForm),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setEconomics(settingsForm)
+        setActionNotice({ type: 'success', message: 'Platform economics updated successfully!' })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to save economics' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Error saving settings' })
+    } finally {
+      setIsSavingSettings(false)
+    }
+  }
 
   // Stream Actions
   const handleKillStream = async (streamId: string, roomName: string) => {
@@ -427,6 +589,15 @@ export default function AdminPortalClient() {
   }
 
   // Filtered views
+  const filteredUsers = users.filter((u) => {
+    if (!userSearch) return true
+    const q = userSearch.toLowerCase()
+    return (
+      u.username.toLowerCase().includes(q) ||
+      (u.display_name && u.display_name.toLowerCase().includes(q))
+    )
+  })
+
   const filteredStreams = streams.filter((s) => {
     if (streamFilter === 'live' && s.status !== 'live') return false
     if (streamFilter === 'ended' && s.status !== 'ended') return false
@@ -461,6 +632,8 @@ export default function AdminPortalClient() {
     }
     return true
   })
+
+  const totalCirculatingCoins = users.reduce((acc, u) => acc + (u.coin_balance || 0), 0)
 
   // Loading initial state
   if (isAuthenticated === null) {
@@ -639,7 +812,7 @@ export default function AdminPortalClient() {
                   Admin
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-400 hidden sm:block">Vercel Serverless Stream Flow Control</span>
+              <span className="text-[10px] text-zinc-400 hidden sm:block">Vercel Serverless Stream Flow & Coin Control</span>
             </div>
           </div>
 
@@ -729,6 +902,20 @@ export default function AdminPortalClient() {
             <span>Overview & Health</span>
           </button>
 
+          {/* User List with Live Chat switch & Coin wallet */}
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              activeTab === 'users'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-600/25'
+                : 'text-zinc-400 hover:text-white hover:bg-[#1f1f1f]'
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            <span>Users & Wallets</span>
+            <span className="text-xs text-amber-400 font-bold">({users.length})</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('streams')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
@@ -785,7 +972,7 @@ export default function AdminPortalClient() {
             }`}
           >
             <Sliders className="h-4 w-4" />
-            <span>Flow Settings</span>
+            <span>Economy & Flow Settings</span>
           </button>
         </div>
 
@@ -795,7 +982,7 @@ export default function AdminPortalClient() {
         {activeTab === 'overview' && (
           <div className="space-y-6 animate-fade-in">
             {/* Metric KPI Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               {/* Active Live Streams */}
               <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
                 <div className="flex items-center justify-between mb-3">
@@ -818,6 +1005,20 @@ export default function AdminPortalClient() {
                 </p>
               </div>
 
+              {/* Total Coins in Circulation */}
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">Circulating Coins</span>
+                  <span className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <Coins className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-extrabold text-amber-400">🪙 {totalCirculatingCoins}</span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">Across {users.length} user wallets</p>
+              </div>
+
               {/* Uploaded Videos */}
               <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
                 <div className="flex items-center justify-between mb-3">
@@ -830,7 +1031,7 @@ export default function AdminPortalClient() {
                   <span className="text-3xl font-extrabold text-white">{stats?.totalVideos ?? 0}</span>
                   <span className="text-xs text-zinc-400">Assets</span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-2">Stored securely in Supabase Storage</p>
+                <p className="text-xs text-zinc-500 mt-2">Stored in Supabase Storage</p>
               </div>
 
               {/* Live Chat Messages */}
@@ -845,7 +1046,7 @@ export default function AdminPortalClient() {
                   <span className="text-3xl font-extrabold text-white">{stats?.totalChats ?? 0}</span>
                   <span className="text-xs text-zinc-400">Interactions</span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-2">WebRTC DataChannel + PostgreSQL</p>
+                <p className="text-xs text-zinc-500 mt-2">WebRTC + PostgreSQL</p>
               </div>
 
               {/* Registered Profiles */}
@@ -857,90 +1058,33 @@ export default function AdminPortalClient() {
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-white">{stats?.totalProfiles ?? 0}</span>
-                  <span className="text-xs text-zinc-400">Creators</span>
+                  <span className="text-3xl font-extrabold text-white">{stats?.totalProfiles ?? users.length}</span>
+                  <span className="text-xs text-zinc-400">Users</span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-2">Authenticated creators & viewers</p>
+                <p className="text-xs text-zinc-500 mt-2">With coin wallets & chat toggles</p>
               </div>
             </div>
 
-            {/* Quick Stream Flow Actions Panel */}
-            <div className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-amber-400" />
-                    <span>Quick Stream Flow Management</span>
-                  </h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">
-                    Execute serverless stream flow operations with immediate real-time effect
-                  </p>
+            {/* Quick Economics Summary Card */}
+            <div className="bg-gradient-to-r from-amber-500/10 via-zinc-900 to-zinc-900 border border-amber-500/20 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Coins className="h-5 w-5 text-amber-400" />
+                  <h3 className="font-bold text-white text-base">Active Coin Economics Policy</h3>
                 </div>
-
-                <button
-                  onClick={handlePurgeGhostStreams}
-                  disabled={isLoadingData}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${isLoadingData ? 'animate-spin' : ''}`} />
-                  <span>Sync & Prune Ghost Streams</span>
-                </button>
+                <p className="text-xs text-zinc-400">
+                  New users receive <strong className="text-amber-400">🪙 {economics.signup_coin_bonus} coins</strong> sign-up bonus • Live chat costs <strong className="text-amber-400">🪙 {economics.chat_cost_per_message} coins/message</strong> • Streamers earn <strong className="text-emerald-400">{economics.streamer_revenue_percent}%</strong> per chat!
+                </p>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                <Link
-                  href="/go-live"
-                  target="_blank"
-                  className="p-4 rounded-xl bg-[#222222] hover:bg-[#282828] border border-[#303030] transition-colors flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-red-600/20 text-red-500 flex items-center justify-center">
-                      <Radio className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-semibold text-white block">Launch Go Live Studio</span>
-                      <span className="text-xs text-zinc-400">Broadcast camera & mic</span>
-                    </div>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
-                </Link>
-
-                <Link
-                  href="/upload"
-                  target="_blank"
-                  className="p-4 rounded-xl bg-[#222222] hover:bg-[#282828] border border-[#303030] transition-colors flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center">
-                      <Video className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-semibold text-white block">Upload New Video</span>
-                      <span className="text-xs text-zinc-400">Direct Supabase Storage upload</span>
-                    </div>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
-                </Link>
-
-                <button
-                  onClick={() => setActiveTab('streams')}
-                  className="p-4 rounded-xl bg-[#222222] hover:bg-[#282828] border border-[#303030] transition-colors flex items-center justify-between text-left group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center">
-                      <Sliders className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-semibold text-white block">Manage Live Rooms</span>
-                      <span className="text-xs text-zinc-400">Force end or alter visibility</span>
-                    </div>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
-                </button>
-              </div>
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs rounded-xl transition-colors shadow-lg shadow-amber-500/20 shrink-0"
+              >
+                Modify Economics Policy
+              </button>
             </div>
 
-            {/* Cloud Architecture Diagnostics */}
+            {/* Cloud Diagnostics */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
@@ -988,8 +1132,8 @@ export default function AdminPortalClient() {
                     <span className="font-mono text-emerald-400">service_role (Admin Bypass RLS)</span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[#252525]">
-                    <span className="text-zinc-500">Storage Buckets</span>
-                    <span className="font-semibold text-white">videos, thumbnails</span>
+                    <span className="text-zinc-500">Tables</span>
+                    <span className="font-semibold text-white">profiles, videos, live_streams, platform_settings</span>
                   </div>
                   <div className="flex justify-between py-1">
                     <span className="text-zinc-500">PostgreSQL Latency</span>
@@ -1002,7 +1146,153 @@ export default function AdminPortalClient() {
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* TAB 2: LIVE STREAMS MANAGEMENT */}
+        {/* TAB 2: USERS & WALLETS (LIVE CHAT SWITCH + COIN LOGIC) */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'users' && (
+          <div className="space-y-4 animate-fade-in">
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#181818] border border-[#272727] p-4 rounded-2xl">
+              <div className="relative flex-1 max-w-md">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Search user by username or display name..."
+                  className="w-full bg-[#121212] border border-[#2c2c2c] rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 transition-colors"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 text-xs text-zinc-400">
+                <span>Total Users: <strong className="text-white">{filteredUsers.length}</strong></span>
+                <span>•</span>
+                <span>Circulating Coins: <strong className="text-amber-400">🪙 {totalCirculatingCoins}</strong></span>
+              </div>
+            </div>
+
+            {/* Users Table */}
+            {filteredUsers.length === 0 ? (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl p-12 text-center text-zinc-500 space-y-2">
+                <Users className="h-8 w-8 mx-auto text-zinc-600 mb-2" />
+                <p className="text-sm font-semibold text-zinc-400">No users found</p>
+                <p className="text-xs">Users registered on StreamFlow will appear here</p>
+              </div>
+            ) : (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#202020] text-zinc-400 uppercase tracking-wider text-[11px] border-b border-[#272727]">
+                      <tr>
+                        <th className="py-3 px-4">User Channel</th>
+                        <th className="py-3 px-4">Joined</th>
+                        <th className="py-3 px-4">Activity</th>
+                        <th className="py-3 px-4 text-center">Live Chat Access</th>
+                        <th className="py-3 px-4">Wallet Balance</th>
+                        <th className="py-3 px-4 text-right">Wallet Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#272727]">
+                      {filteredUsers.map((u) => (
+                        <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              {u.avatar_url ? (
+                                <Image
+                                  src={u.avatar_url}
+                                  alt={u.username}
+                                  width={32}
+                                  height={32}
+                                  className="rounded-full object-cover shrink-0"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#9c27b0] to-[#e91e63] flex items-center justify-center font-bold text-xs text-white shrink-0">
+                                  {u.username[0].toUpperCase()}
+                                </div>
+                              )}
+                              <div>
+                                <span className="font-semibold text-white block">
+                                  {u.display_name || u.username}
+                                </span>
+                                <span className="text-[11px] text-zinc-500">@{u.username}</span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4 whitespace-nowrap text-zinc-400 text-[11px]">
+                            {formatDate(u.created_at)}
+                          </td>
+
+                          <td className="py-3 px-4 whitespace-nowrap text-zinc-400 text-[11px]">
+                            <span>{u.videoCount ?? 0} videos</span>
+                            <span className="mx-1">•</span>
+                            <span>{u.streamCount ?? 0} streams</span>
+                          </td>
+
+                          {/* LIVE CHAT ON/OFF SWITCH */}
+                          <td className="py-3 px-4 whitespace-nowrap text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleUserChat(u)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm ${
+                                u.chat_enabled !== false
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
+                                  : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+                              }`}
+                              title={
+                                u.chat_enabled !== false
+                                  ? 'Live chat is ON. Click to disable/mute.'
+                                  : 'Live chat is OFF. Click to re-enable.'
+                              }
+                            >
+                              {u.chat_enabled !== false ? (
+                                <>
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                  <span>Chat ON</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                                  <span>Chat OFF (Muted)</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+
+                          {/* WALLET COIN BALANCE */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 font-bold text-xs">
+                              <span>🪙</span>
+                              <span>{u.coin_balance ?? 0} Coins</span>
+                            </div>
+                          </td>
+
+                          {/* WALLET MANAGEMENT BUTTONS */}
+                          <td className="py-3 px-4 whitespace-nowrap text-right space-x-2">
+                            <button
+                              onClick={() => {
+                                setManagingCoinsUser(u)
+                                setCoinActionType('add')
+                                setCoinAmount(50)
+                                setCoinReason('Admin bonus')
+                              }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl transition-colors"
+                            >
+                              <Coins className="h-3.5 w-3.5" />
+                              <span>Manage Coins</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 3: LIVE STREAMS MANAGEMENT */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'streams' && (
           <div className="space-y-4 animate-fade-in">
@@ -1196,7 +1486,7 @@ export default function AdminPortalClient() {
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* TAB 3: UPLOADED VIDEOS MANAGEMENT */}
+        {/* TAB 4: UPLOADED VIDEOS MANAGEMENT */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'videos' && (
           <div className="space-y-4 animate-fade-in">
@@ -1368,7 +1658,7 @@ export default function AdminPortalClient() {
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* TAB 4: LIVE CHAT MODERATION */}
+        {/* TAB 5: LIVE CHAT MODERATION */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'chats' && (
           <div className="space-y-4 animate-fade-in">
@@ -1488,75 +1778,359 @@ export default function AdminPortalClient() {
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* TAB 5: FLOW SETTINGS & CREDENTIAL CONFIG */}
+        {/* TAB 6: ECONOMY & FLOW SETTINGS */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'settings' && (
-          <div className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-6 animate-fade-in">
-            <div>
+          <div className="space-y-6 animate-fade-in">
+            {/* PLATFORM COIN ECONOMICS CONTROLS (REQUESTED BY USER) */}
+            <form onSubmit={handleSaveSettings} className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-6">
+              <div className="flex items-center justify-between pb-4 border-b border-[#272727]">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Coins className="h-5 w-5 text-amber-400" />
+                    <span>Live Chat Pricing & Coin Economics</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    Control how coins are gifted on signup, how viewers pay per chat, and what percent streamers earn.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingSettings}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-bold text-xs rounded-xl transition-colors shadow-lg shadow-amber-500/20 flex items-center gap-1.5"
+                >
+                  {isSavingSettings ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Save Economics Policy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Sign-up Coin Bonus */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                      Sign-Up Bonus
+                    </span>
+                    <span className="text-base">🎁</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Coins automatically deposited into every newly created user wallet upon sign up.
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Bonus Coins Amount</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={settingsForm.signup_coin_bonus}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            signup_coin_bonus: parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pl-8 focus:outline-none focus:border-amber-400"
+                      />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Per-Chat Cost */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+                      Live Chat Charge
+                    </span>
+                    <span className="text-base">💬</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Coins charged from a viewer's wallet for every message sent in live stream chat. (0 for free chat)
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Cost Per Message</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="500"
+                        value={settingsForm.chat_cost_per_message}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            chat_cost_per_message: parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pl-8 focus:outline-none focus:border-blue-400"
+                      />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Streamer Revenue Share % */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                      Streamer Revenue %
+                    </span>
+                    <span className="text-base">📈</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Percentage of the chat fee that gets credited directly to the live streamer's wallet.
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Broadcaster Allocation (%)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={settingsForm.streamer_revenue_percent}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            streamer_revenue_percent: Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)),
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pr-8 focus:outline-none focus:border-emerald-400"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Preview Calculation */}
+              <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-400" />
+                  <span>
+                    <strong>Economic Simulation:</strong> A viewer posts 1 chat message → Viewer pays{' '}
+                    <strong className="text-amber-400">🪙 {settingsForm.chat_cost_per_message} coins</strong> → Streamer receives{' '}
+                    <strong className="text-emerald-400">
+                      🪙 {Math.floor(settingsForm.chat_cost_per_message * (settingsForm.streamer_revenue_percent / 100))} coins
+                    </strong>{' '}
+                    ({settingsForm.streamer_revenue_percent}%).
+                  </span>
+                </div>
+              </div>
+            </form>
+
+            {/* Serverless Infrastructure Config */}
+            <div className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-4">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Sliders className="h-4 w-4 text-red-500" />
                 <span>StreamFlow Serverless Configuration</span>
               </h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                Zero backend required. Powered entirely by Next.js Serverless Edge Functions, LiveKit Cloud, and Supabase.
-              </p>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl bg-[#121212] border border-[#2c2c2c] space-y-3">
-                <span className="text-xs font-bold text-red-400 uppercase tracking-wider block">
-                  Admin Credentials
-                </span>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between py-1 border-b border-[#222]">
-                    <span className="text-zinc-500">Configured Username</span>
-                    <span className="font-mono text-white">{commonCredentials.username}</span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-[#222]">
-                    <span className="text-zinc-500">Configured Password</span>
-                    <span className="font-mono text-zinc-400">•••••••••• ({commonCredentials.password})</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-zinc-500">Override via Env</span>
-                    <span className="font-mono text-zinc-400">ADMIN_USERNAME / ADMIN_PASSWORD</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-[#121212] border border-[#2c2c2c] space-y-3">
+                  <span className="text-xs font-bold text-red-400 uppercase tracking-wider block">
+                    Admin Portal Credentials
+                  </span>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between py-1 border-b border-[#222]">
+                      <span className="text-zinc-500">Configured Username</span>
+                      <span className="font-mono text-white">{commonCredentials.username}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-[#222]">
+                      <span className="text-zinc-500">Configured Password</span>
+                      <span className="font-mono text-zinc-400">•••••••••• ({commonCredentials.password})</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="p-4 rounded-xl bg-[#121212] border border-[#2c2c2c] space-y-3">
-                <span className="text-xs font-bold text-blue-400 uppercase tracking-wider block">
-                  LiveKit Cloud WebRTC
-                </span>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between py-1 border-b border-[#222]">
-                    <span className="text-zinc-500">Cloud URL</span>
-                    <span className="font-mono text-white">wss://stream-flow-8560l64p.livekit.cloud</span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-[#222]">
-                    <span className="text-zinc-500">API Key</span>
-                    <span className="font-mono text-zinc-400">APID9m8XgypZbA4</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-zinc-500">Streaming Protocol</span>
-                    <span className="font-semibold text-emerald-400">WebRTC (Sub-100ms Ultra Low Latency)</span>
+                <div className="p-4 rounded-xl bg-[#121212] border border-[#2c2c2c] space-y-3">
+                  <span className="text-xs font-bold text-blue-400 uppercase tracking-wider block">
+                    LiveKit Cloud WebRTC
+                  </span>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between py-1 border-b border-[#222]">
+                      <span className="text-zinc-500">Cloud URL</span>
+                      <span className="font-mono text-white">wss://stream-flow-8560l64p.livekit.cloud</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-[#222]">
+                      <span className="text-zinc-500">Protocol</span>
+                      <span className="font-semibold text-emerald-400">WebRTC (Ultra Low Latency)</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-semibold text-white block mb-0.5">Vercel Deployment Compatibility</span>
-                <span>
-                  This admin suite utilizes Next.js App Router Server Route Handlers with Supabase service-role client.
-                  It requires zero persistent server daemons, docker containers, or external backends to run in production.
-                </span>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MANAGE USER COINS MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {managingCoinsUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#181818] border border-[#2e2e2e] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                  <Coins className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Manage User Wallet Coins</h4>
+                  <p className="text-xs text-zinc-400">
+                    Target: <strong className="text-white">@{managingCoinsUser.username}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setManagingCoinsUser(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Current Balance Display */}
+            <div className="p-3 bg-[#121212] border border-[#272727] rounded-xl flex items-center justify-between text-xs">
+              <span className="text-zinc-400">Current Wallet Balance:</span>
+              <span className="text-base font-bold text-amber-400">
+                🪙 {managingCoinsUser.coin_balance ?? 0} Coins
+              </span>
+            </div>
+
+            {/* Action Type Selector */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setCoinActionType('add')}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
+                  coinActionType === 'add'
+                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                    : 'bg-[#141414] border-[#292929] text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Coins</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCoinActionType('remove')}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
+                  coinActionType === 'remove'
+                    ? 'bg-red-500/20 border-red-500/40 text-red-400'
+                    : 'bg-[#141414] border-[#292929] text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Minus className="h-3.5 w-3.5" />
+                <span>Deduct</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCoinActionType('set')}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
+                  coinActionType === 'set'
+                    ? 'bg-blue-500/20 border-blue-500/40 text-blue-400'
+                    : 'bg-[#141414] border-[#292929] text-zinc-400 hover:text-white'
+                }`}
+              >
+                <span>Set Exact</span>
+              </button>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {[10, 50, 100, 250, 500].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setCoinAmount(preset)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-semibold transition-colors ${
+                    coinAmount === preset
+                      ? 'bg-amber-500 text-black'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  }`}
+                >
+                  {coinActionType === 'remove' ? `-${preset}` : `+${preset}`}
+                </button>
+              ))}
+            </div>
+
+            {/* Amount Input */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">
+                Coin Amount
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  min="1"
+                  max="100000"
+                  value={coinAmount}
+                  onChange={(e) => setCoinAmount(Math.max(1, parseInt(e.target.value, 10) || 0))}
+                  className="w-full bg-[#121212] border border-[#2c2c2c] rounded-xl px-3 py-2 text-sm text-white pl-8 focus:outline-none focus:border-amber-400"
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+              </div>
+            </div>
+
+            {/* Reason */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">
+                Reason / Note (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Community award, Compensation, Adjustment"
+                value={coinReason}
+                onChange={(e) => setCoinReason(e.target.value)}
+                className="w-full bg-[#121212] border border-[#2c2c2c] rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#272727]">
+              <button
+                type="button"
+                disabled={isSubmittingCoins}
+                onClick={() => setManagingCoinsUser(null)}
+                className="px-4 py-2 text-xs font-semibold text-zinc-300 hover:text-white bg-[#222] hover:bg-[#282828] rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isSubmittingCoins}
+                onClick={handleSaveCoins}
+                className="px-4 py-2 text-xs font-bold text-black bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors shadow-lg shadow-amber-500/20 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isSubmittingCoins ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Coins className="h-3.5 w-3.5" />
+                    <span>Confirm Wallet Update</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal */}
       {pendingAction && (

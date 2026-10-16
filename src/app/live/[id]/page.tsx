@@ -28,6 +28,8 @@ async function getLiveStream(id: string): Promise<(LiveStreamRow & { profiles?: 
         display_name: 'LiveKit Cloud Test',
         avatar_url: null,
         bio: 'Test Stream',
+        coin_balance: 50,
+        chat_enabled: true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },

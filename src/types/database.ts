@@ -14,8 +14,27 @@ export interface ProfileRow {
   display_name: string | null
   avatar_url: string | null
   bio: string | null
+  coin_balance: number
+  chat_enabled: boolean
   created_at: string
   updated_at: string
+}
+
+export interface PlatformSettingRow {
+  key: string
+  value: string
+  description: string | null
+  updated_at: string
+}
+
+export interface WalletTransactionRow {
+  id: string
+  user_id: string
+  amount: number
+  type: 'signup_bonus' | 'chat_fee' | 'streamer_earning' | 'admin_adjustment'
+  related_stream_id: string | null
+  description: string | null
+  created_at: string
 }
 
 export interface VideoRow {
@@ -64,6 +83,8 @@ export interface Database {
           display_name?: string | null
           avatar_url?: string | null
           bio?: string | null
+          coin_balance?: number
+          chat_enabled?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -73,6 +94,8 @@ export interface Database {
           display_name?: string | null
           avatar_url?: string | null
           bio?: string | null
+          coin_balance?: number
+          chat_enabled?: boolean
           created_at?: string
           updated_at?: string
         }

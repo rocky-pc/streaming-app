@@ -201,6 +201,18 @@ function NavbarContent() {
             <span className="hidden md:inline">Admin</span>
           </Link>
 
+          {/* User Coin Balance */}
+          {user && (
+            <Link
+              href={profileUrl}
+              className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold rounded-full transition-colors"
+              title="Your Wallet Coins"
+            >
+              <span>🪙</span>
+              <span>{profile?.coin_balance ?? 50}</span>
+            </Link>
+          )}
+
           {/* User Account / Profile */}
           {isLoading ? (
             <div className="w-8 h-8 rounded-full bg-zinc-800 animate-pulse" />
@@ -249,6 +261,15 @@ function NavbarContent() {
                         View your channel
                       </Link>
                     </div>
+                  </div>
+
+                  {/* Wallet Coins Summary in Dropdown */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/10 border-b border-[#3e3e3e] text-xs">
+                    <div className="flex items-center gap-1.5 text-zinc-300 font-medium">
+                      <span>🪙</span>
+                      <span>Wallet Coins:</span>
+                    </div>
+                    <span className="font-bold text-amber-400 text-sm">{profile?.coin_balance ?? 50}</span>
                   </div>
 
                   {/* Navigation Links */}

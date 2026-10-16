@@ -146,6 +146,25 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
                     {profile.bio}
                   </p>
                 )}
+
+                {/* User Wallet Coins and Live Chat Status */}
+                <div className="flex flex-wrap items-center gap-2.5 pt-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-xs shadow-sm">
+                    <span className="text-sm">🪙</span>
+                    <span>{profile.coin_balance ?? 50} Coins</span>
+                  </div>
+
+                  <div
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                      profile.chat_enabled !== false
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border-red-500/20 text-red-400'
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${profile.chat_enabled !== false ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span>{profile.chat_enabled !== false ? 'Live Chat Active' : 'Chat Muted by Admin'}</span>
+                  </div>
+                </div>
               </div>
             </div>
 
