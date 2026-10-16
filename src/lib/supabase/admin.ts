@@ -9,7 +9,8 @@ export function createAdminClient() {
     throw new Error('Missing Supabase admin environment variables')
   }
 
-  return createSupabaseClient<Database>(supabaseUrl, serviceRoleKey, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return createSupabaseClient<any>(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

@@ -19,6 +19,7 @@ import {
   HelpCircle,
   ExternalLink,
   Radio,
+  Shield,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
@@ -190,6 +191,16 @@ function NavbarContent() {
             <span className="hidden sm:inline text-xs">Go Live</span>
           </Link>
 
+          {/* Admin Portal Quick Link */}
+          <Link
+            href="/admin"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 text-xs font-semibold rounded-full transition-colors"
+            title="StreamFlow Admin Portal"
+          >
+            <Shield className="h-3.5 w-3.5 text-red-500" />
+            <span className="hidden md:inline">Admin</span>
+          </Link>
+
           {/* User Account / Profile */}
           {isLoading ? (
             <div className="w-8 h-8 rounded-full bg-zinc-800 animate-pulse" />
@@ -276,6 +287,15 @@ function NavbarContent() {
                     >
                       <Radio className="h-5 w-5 text-red-500" />
                       <span>Go Live Studio</span>
+                    </Link>
+
+                    <Link
+                      href="/admin"
+                      onClick={() => setIsProfileDropdownOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#383838] transition-colors text-amber-400"
+                    >
+                      <Shield className="h-5 w-5 text-amber-500" />
+                      <span>Admin Control Panel</span>
                     </Link>
                   </div>
 
@@ -443,6 +463,17 @@ function NavbarContent() {
                   >
                     <Radio className="h-5 w-5 text-red-500" />
                     <span>Go Live Studio</span>
+                  </Link>
+
+                  <Link
+                    href="/admin"
+                    onClick={() => setIsSidebarOpen(false)}
+                    className={`flex items-center gap-4 px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                      pathname === '/admin' ? 'bg-[#272727] text-white font-semibold' : 'hover:bg-[#272727] text-amber-400'
+                    }`}
+                  >
+                    <Shield className="h-5 w-5 text-amber-500" />
+                    <span>Admin Panel</span>
                   </Link>
 
                   <div className="my-2 border-t border-[#272727]" />
