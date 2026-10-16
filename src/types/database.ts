@@ -35,6 +35,24 @@ export interface VideoRow {
   updated_at: string
 }
 
+export type LiveStreamStatus = 'scheduled' | 'live' | 'ended'
+export type LiveStreamVisibility = 'public' | 'unlisted' | 'private'
+
+export interface LiveStreamRow {
+  id: string
+  user_id: string
+  title: string
+  description: string | null
+  room_name: string
+  status: LiveStreamStatus
+  visibility: LiveStreamVisibility
+  started_at: string | null
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+  profiles?: ProfileRow | null
+}
+
 export interface Database {
   public: {
     Tables: {

@@ -1,6 +1,10 @@
-import type { VideoVisibility, ProfileRow, VideoRow } from './database'
+import type { VideoVisibility, ProfileRow, VideoRow, LiveStreamRow, LiveStreamStatus, LiveStreamVisibility } from './database'
 
-export type { VideoVisibility, ProfileRow, VideoRow }
+export type { VideoVisibility, ProfileRow, VideoRow, LiveStreamRow, LiveStreamStatus, LiveStreamVisibility }
+
+export interface LiveStream extends LiveStreamRow {
+  profile?: Profile | null
+}
 
 export interface Profile extends ProfileRow {}
 

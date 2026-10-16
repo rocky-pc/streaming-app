@@ -18,6 +18,7 @@ import {
   Settings,
   HelpCircle,
   ExternalLink,
+  Radio,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
@@ -179,6 +180,16 @@ function NavbarContent() {
             </Link>
           )}
 
+          {/* Go Live Button */}
+          <Link
+            href={user ? '/go-live' : '/login?redirect=/go-live'}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 text-sm font-semibold rounded-full transition-colors"
+            title="Go live"
+          >
+            <Radio className="h-3.5 w-3.5 animate-pulse text-red-500" />
+            <span className="hidden sm:inline text-xs">Go Live</span>
+          </Link>
+
           {/* User Account / Profile */}
           {isLoading ? (
             <div className="w-8 h-8 rounded-full bg-zinc-800 animate-pulse" />
@@ -256,6 +267,15 @@ function NavbarContent() {
                     >
                       <Upload className="h-5 w-5 text-zinc-400" />
                       <span>Upload Video</span>
+                    </Link>
+
+                    <Link
+                      href="/go-live"
+                      onClick={() => setIsProfileDropdownOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#383838] transition-colors text-red-400"
+                    >
+                      <Radio className="h-5 w-5 text-red-500" />
+                      <span>Go Live Studio</span>
                     </Link>
                   </div>
 
@@ -412,6 +432,17 @@ function NavbarContent() {
                   >
                     <Upload className="h-5 w-5" />
                     <span>Upload Video</span>
+                  </Link>
+
+                  <Link
+                    href="/go-live"
+                    onClick={() => setIsSidebarOpen(false)}
+                    className={`flex items-center gap-4 px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                      pathname === '/go-live' ? 'bg-[#272727] text-white font-semibold' : 'hover:bg-[#272727]'
+                    }`}
+                  >
+                    <Radio className="h-5 w-5 text-red-500" />
+                    <span>Go Live Studio</span>
                   </Link>
 
                   <div className="my-2 border-t border-[#272727]" />
