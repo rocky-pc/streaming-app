@@ -55,6 +55,43 @@ export async function POST(request: NextRequest) {
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
     const supabaseService = createClient(supabaseUrl, supabaseServiceKey)
 
+    // Handle test room directly
+    if (streamId === 'test') {
+      const isBroadcaster = action === 'broadcast'
+      const participantId = isBroadcaster
+        ? (authenticatedUser ? `broadcaster-${authenticatedUser.id}` : '1')
+        : (authenticatedUser ? `viewer-${authenticatedUser.id}` : `guest-${Math.random().toString(36).substring(2, 8)}`)
+
+      const at = new AccessToken(livekitApiKey, livekitApiSecret, {
+        identity: participantId,
+        name: participantName || (isBroadcaster ? 'Test Broadcaster' : 'Test Viewer'),
+        ttl: '6h',
+      })
+
+      at.addGrant({
+        room: 'Test',
+        roomJoin: true,
+        canPublish: isBroadcaster,
+        canPublishData: isBroadcaster,
+        canSubscribe: true,
+      })
+
+      const token = await at.toJwt()
+
+      return NextResponse.json({
+        token,
+        livekitUrl,
+        roomName: 'Test',
+        stream: {
+          id: 'test',
+          title: 'LiveKit Cloud Test Room',
+          status: 'live',
+          visibility: 'public',
+          user_id: authenticatedUser?.id || 'test-broadcaster',
+        },
+      })
+    }
+
     const { data: stream, error: streamError } = await supabaseService
       .from('live_streams')
       .select('*, profiles:user_id(username, display_name, avatar_url)')

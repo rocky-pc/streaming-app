@@ -13,6 +13,38 @@ export async function GET(
       return NextResponse.json({ error: 'Stream ID is required' }, { status: 400 })
     }
 
+    if (id === 'test') {
+      return NextResponse.json({
+        data: {
+          id: 'test',
+          user_id: 'test-broadcaster',
+          title: 'LiveKit Cloud Test Room',
+          description: 'Realtime test room for verifying LiveKit Cloud audio/video streaming.',
+          room_name: 'Test',
+          status: 'live',
+          visibility: 'public',
+          started_at: new Date().toISOString(),
+          ended_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          profiles: {
+            id: 'test-broadcaster',
+            username: 'livekit_tester',
+            display_name: 'LiveKit Cloud Test',
+            avatar_url: null,
+            bio: 'Test Stream',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      })
+    }
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    if (!isUuid) {
+      return NextResponse.json({ error: 'Live stream not found' }, { status: 404 })
+    }
+
     const supabaseServer = await createSupabaseServerClient()
     const { data: { user } } = await supabaseServer.auth.getUser()
 
