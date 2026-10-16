@@ -29,13 +29,13 @@ async function VideoList() {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Videos</h1>
-          <p className="text-gray-400">Discover and watch amazing content</p>
+      <div className="max-w-7xl mx-auto px-4 py-6 pb-28">
+        <div className="mb-6">
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1">Videos</h1>
+          <p className="text-gray-400 text-sm">Discover and watch amazing content</p>
         </div>
 
-        <div className="mb-8">
+        <div className="mb-6 sticky top-16 z-30 bg-gray-950/80 backdrop-blur-sm px-4 -mx-4 py-4 border-b border-gray-800">
           <SearchBarClient />
         </div>
 
