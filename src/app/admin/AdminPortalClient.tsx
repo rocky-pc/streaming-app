@@ -39,6 +39,7 @@ import {
   ToggleLeft,
   ToggleRight,
   X,
+  TrendingUp,
 } from 'lucide-react'
 import { formatFileSize, formatRelativeTime, formatDuration, formatDate } from '@/lib/utils'
 
@@ -76,6 +77,7 @@ interface AdminUser {
   updated_at: string
   videoCount?: number
   streamCount?: number
+  totalRevenue?: number
 }
 
 export interface PaidEmojiItem {
@@ -146,6 +148,8 @@ interface AdminChat {
   stream_id: string
   user_id: string
   message: string
+  paid_emoji?: string | null
+  coins_paid?: number | null
   created_at: string
   profiles?: {
     username: string
@@ -363,6 +367,24 @@ export default function AdminPortalClient() {
       loadDashboardData()
     }
   }, [isAuthenticated, loadDashboardData])
+
+  // Live real-time chat polling for Admin without requiring page refresh
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'chats') return
+    const pollChats = async () => {
+      try {
+        const chatsRes = await fetch('/api/admin/chats')
+        if (chatsRes.ok) {
+          const chatsData = await chatsRes.json()
+          setChats(chatsData.messages || [])
+        }
+      } catch {
+        // silent polling error
+      }
+    }
+    const interval = setInterval(pollChats, 3500)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, activeTab])
 
   // -------------------------------------------------------------
   // USER LIST: LIVE CHAT ON/OFF SWITCH HANDLER
@@ -722,11 +744,12 @@ export default function AdminPortalClient() {
   })
 
   const totalCirculatingCoins = users.reduce((acc, u) => acc + (u.coin_balance || 0), 0)
+  const totalStreamerRevenue = users.reduce((acc, u) => acc + (u.totalRevenue || 0), 0)
 
   // Loading initial state
   if (isAuthenticated === null) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+      <div className="min-h-screen -mt-14 -mb-14 sm:mb-0 bg-[#0a0a0a] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-zinc-400">
           <RefreshCw className="h-8 w-8 animate-spin text-red-500" />
           <p className="text-sm">Connecting to StreamFlow Admin Service...</p>
@@ -740,7 +763,7 @@ export default function AdminPortalClient() {
   // -------------------------------------------------------------
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#070707] text-zinc-100 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden select-none">
+      <div className="min-h-screen -mt-14 -mb-14 sm:mb-0 bg-[#070707] text-zinc-100 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden select-none">
         {/* Subtle Ambient Background Gradients */}
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] bg-red-600/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute bottom-10 right-10 w-80 h-80 bg-zinc-800/20 rounded-full blur-[100px] pointer-events-none" />
@@ -862,7 +885,7 @@ export default function AdminPortalClient() {
   // VIEW: MAIN ADMIN DASHBOARD
   // -------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-zinc-100 flex flex-col font-sans">
+    <div className="min-h-screen -mt-14 -mb-14 sm:mb-0 bg-[#0f0f0f] text-zinc-100 flex flex-col font-sans">
       {/* Top Admin Navigation Bar */}
       <header className="sticky top-0 z-40 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-[#272727] px-4 lg:px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -1228,10 +1251,12 @@ export default function AdminPortalClient() {
                 />
               </div>
 
-              <div className="flex items-center gap-3 text-xs text-zinc-400">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
                 <span>Total Users: <strong className="text-white">{filteredUsers.length}</strong></span>
                 <span>•</span>
                 <span>Circulating Coins: <strong className="text-amber-400">🪙 {totalCirculatingCoins}</strong></span>
+                <span>•</span>
+                <span>Total Streamer Earnings: <strong className="text-emerald-400">📈 {totalStreamerRevenue} Coins</strong></span>
               </div>
             </div>
 
@@ -1253,6 +1278,7 @@ export default function AdminPortalClient() {
                         <th className="py-3 px-4">Activity</th>
                         <th className="py-3 px-4 text-center">Live Chat Access</th>
                         <th className="py-3 px-4">Wallet Balance</th>
+                        <th className="py-3 px-4">Streamer Revenue</th>
                         <th className="py-3 px-4 text-right">Wallet Actions</th>
                       </tr>
                     </thead>
@@ -1328,6 +1354,14 @@ export default function AdminPortalClient() {
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 font-bold text-xs">
                               <span>🪙</span>
                               <span>{u.coin_balance ?? 0} Coins</span>
+                            </div>
+                          </td>
+
+                          {/* STREAMER REVENUE */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-bold text-xs" title="Lifetime coins earned from chat & super stickers">
+                              <span>📈</span>
+                              <span>{u.totalRevenue ?? 0} Coins</span>
                             </div>
                           </td>
 
@@ -1803,7 +1837,7 @@ export default function AdminPortalClient() {
                         )}
 
                         <div className="space-y-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold text-xs text-white">
                               {c.profiles?.display_name || c.profiles?.username || 'Anonymous'}
                             </span>
@@ -1816,8 +1850,23 @@ export default function AdminPortalClient() {
                                 in: {c.live_streams.title}
                               </span>
                             )}
+                            {(c.paid_emoji || (c.coins_paid && c.coins_paid > 0)) && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 text-amber-300 font-bold text-[10px]">
+                                {c.paid_emoji && <span className="text-sm">{c.paid_emoji}</span>}
+                                <span>🪙 {c.coins_paid || 0} Coins Paid</span>
+                              </span>
+                            )}
                           </div>
-                          <p className="text-sm text-zinc-200 break-words">{c.message}</p>
+                          <div className="flex items-center gap-2">
+                            {c.paid_emoji && (
+                              <span className="text-2xl filter drop-shadow shrink-0 select-none">
+                                {c.paid_emoji}
+                              </span>
+                            )}
+                            <p className={`text-sm break-words ${c.paid_emoji ? 'text-amber-200 font-semibold' : 'text-zinc-200'}`}>
+                              {c.message}
+                            </p>
+                          </div>
                         </div>
                       </div>
 

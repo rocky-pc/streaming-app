@@ -193,6 +193,23 @@ export async function getUserProfile(
 }
 
 /**
+ * Get streamer lifetime coin revenue earned from live stream chats and super emojis
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getUserStreamerRevenue(userId: string, customClient?: any): Promise<number> {
+  const client = getClient(customClient)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (client as any)
+    .from('wallet_transactions')
+    .select('amount')
+    .eq('user_id', userId)
+    .eq('type', 'streamer_earning')
+
+  if (error || !data) return 0
+  return data.reduce((acc: number, tx: { amount?: number }) => acc + (tx.amount || 0), 0)
+}
+
+/**
  * Update user profile
  */
 export async function updateProfile(

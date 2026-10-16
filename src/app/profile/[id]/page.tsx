@@ -1,6 +1,6 @@
 import { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { getUserProfile, getUserPublicVideos } from '@/lib/api'
+import { getUserProfile, getUserPublicVideos, getUserStreamerRevenue } from '@/lib/api'
 import { ProfileClient } from './ProfileClient'
 
 export const dynamic = 'force-dynamic'
@@ -32,7 +32,10 @@ export default async function ProfilePage({ params }: PageProps) {
     notFound()
   }
 
-  const videos = await getUserPublicVideos(profile.id)
+  const [videos, revenue] = await Promise.all([
+    getUserPublicVideos(profile.id),
+    getUserStreamerRevenue(profile.id),
+  ])
 
-  return <ProfileClient profile={profile} initialVideos={videos} />
+  return <ProfileClient profile={profile} initialVideos={videos} streamerRevenue={revenue} />
 }

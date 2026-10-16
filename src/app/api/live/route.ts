@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { title, description, visibility = 'public' } = body
+    const { title, description, visibility = 'public', thumbnail_url } = body
 
     if (!title || !title.trim()) {
       return NextResponse.json(
@@ -128,6 +128,7 @@ export async function POST(request: NextRequest) {
         room_name: roomName,
         status: 'scheduled',
         visibility,
+        thumbnail_url: thumbnail_url?.trim() || null,
       })
       .select('*, profiles:user_id(id, username, display_name, avatar_url)')
       .single()

@@ -34,8 +34,12 @@ import {
   ArrowLeft,
   MessageSquare,
   Sparkles,
+  ImageIcon,
+  Upload,
+  Trash2,
 } from 'lucide-react'
 import { LiveChat } from '@/components/live/LiveChat'
+import { getSupabaseBrowserClient } from '@/lib/supabase'
 
 interface MediaDeviceInfoState {
   videoInputs: MediaDeviceInfo[]
@@ -51,6 +55,10 @@ export function GoLiveClient() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<'public' | 'unlisted' | 'private'>('public')
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null)
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null)
+  const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false)
+  const thumbnailInputRef = useRef<HTMLInputElement>(null)
 
   // Device & Preview states
   const [devices, setDevices] = useState<MediaDeviceInfoState>({ videoInputs: [], audioInputs: [] })
@@ -90,6 +98,44 @@ export function GoLiveClient() {
       router.push('/login?redirect=/go-live')
     }
   }, [user, isAuthLoading, router])
+
+  // Cleanup thumbnail preview
+  useEffect(() => {
+    return () => {
+      if (thumbnailPreview) {
+        URL.revokeObjectURL(thumbnailPreview)
+      }
+    }
+  }, [thumbnailPreview])
+
+  const handleThumbnailSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      addToast('Please select a valid image file (JPG, PNG, WebP).', 'error')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      addToast('Thumbnail image must be smaller than 5MB.', 'error')
+      return
+    }
+    if (thumbnailPreview) {
+      URL.revokeObjectURL(thumbnailPreview)
+    }
+    setThumbnailFile(file)
+    setThumbnailPreview(URL.createObjectURL(file))
+  }
+
+  const handleRemoveThumbnail = () => {
+    if (thumbnailPreview) {
+      URL.revokeObjectURL(thumbnailPreview)
+    }
+    setThumbnailFile(null)
+    setThumbnailPreview(null)
+    if (thumbnailInputRef.current) {
+      thumbnailInputRef.current.value = ''
+    }
+  }
 
   // Stop local media tracks helper
   const stopLocalTracks = useCallback(() => {
@@ -311,7 +357,33 @@ export function GoLiveClient() {
     setIsConnecting(true)
 
     try {
-      // 1. Create stream record in database
+      // 1. Upload custom thumbnail if selected
+      let uploadedThumbnailUrl: string | null = null
+      if (thumbnailFile) {
+        setIsUploadingThumbnail(true)
+        try {
+          const supabase = getSupabaseBrowserClient()
+          const fileExt = thumbnailFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+          const filePath = `live-thumbnails/${user?.id || 'creator'}/${Date.now()}.${fileExt}`
+          const { error: uploadError } = await supabase.storage
+            .from('thumbnails')
+            .upload(filePath, thumbnailFile, {
+              cacheControl: '3600',
+              upsert: true,
+              contentType: thumbnailFile.type || 'image/jpeg',
+            })
+          if (!uploadError) {
+            const { data: publicUrlData } = supabase.storage.from('thumbnails').getPublicUrl(filePath)
+            uploadedThumbnailUrl = publicUrlData.publicUrl
+          }
+        } catch (thumbErr) {
+          console.warn('Thumbnail upload error (continuing without thumbnail):', thumbErr)
+        } finally {
+          setIsUploadingThumbnail(false)
+        }
+      }
+
+      // 2. Create stream record in database
       const createRes = await fetch('/api/live', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -319,6 +391,7 @@ export function GoLiveClient() {
           title: title.trim(),
           description: description.trim() || undefined,
           visibility,
+          thumbnail_url: uploadedThumbnailUrl || undefined,
         }),
       })
 
@@ -818,6 +891,63 @@ export function GoLiveClient() {
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full bg-[#121212] border border-[#383838] text-white text-sm rounded-xl px-3.5 py-2.5 focus:border-[#3ea6ff] focus:outline-none placeholder-zinc-500 resize-none"
                 />
+              </div>
+
+              {/* Custom Thumbnail Upload (Optional) */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
+                  Stream Thumbnail <span className="text-zinc-500 font-normal">(Optional)</span>
+                </label>
+                <input
+                  ref={thumbnailInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleThumbnailSelect}
+                  disabled={isLive}
+                  className="hidden"
+                />
+
+                {thumbnailPreview ? (
+                  <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-[#383838] bg-black group">
+                    <img
+                      src={thumbnailPreview}
+                      alt="Stream Thumbnail Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => thumbnailInputRef.current?.click()}
+                        disabled={isLive}
+                        className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-medium rounded-full transition-colors"
+                      >
+                        Change Image
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRemoveThumbnail}
+                        disabled={isLive}
+                        className="p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-full transition-colors"
+                        title="Remove thumbnail"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isLive}
+                    onClick={() => thumbnailInputRef.current?.click()}
+                    className="w-full py-4 px-3 rounded-2xl border border-dashed border-[#383838] hover:border-zinc-500 bg-[#121212]/80 hover:bg-[#161616] text-zinc-400 hover:text-zinc-200 transition-all flex flex-col items-center justify-center gap-1.5"
+                  >
+                    <div className="p-2 rounded-full bg-zinc-800 text-zinc-400">
+                      <ImageIcon className="h-5 w-5" />
+                    </div>
+                    <span className="text-xs font-semibold text-zinc-300">Upload Custom Thumbnail</span>
+                    <span className="text-[11px] text-zinc-500">16:9 JPG, PNG or WebP up to 5MB</span>
+                  </button>
+                )}
               </div>
 
               {/* Visibility Option */}

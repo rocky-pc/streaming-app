@@ -86,7 +86,7 @@ export function LiveChat({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // 1. Initial Load of chat messages & economics from API
+  // 1. Initial Load & Background Live Polling of chat messages & economics from API
   useEffect(() => {
     let isMounted = true
 
@@ -96,7 +96,22 @@ export function LiveChat({
         if (res.ok) {
           const json = await res.json()
           if (isMounted) {
-            if (json.messages) setMessages(json.messages)
+            if (json.messages && Array.isArray(json.messages)) {
+              setMessages((prev) => {
+                const map = new Map<string, ChatMessage>()
+                // First keep existing messages
+                for (const m of prev) {
+                  map.set(m.id, m)
+                }
+                // Merge incoming server messages
+                for (const m of json.messages) {
+                  map.set(m.id, m)
+                }
+                return Array.from(map.values()).sort(
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                )
+              })
+            }
             if (json.economics) {
               setChatCost(json.economics.chatCost ?? 0)
               setStreamerPercent(json.economics.streamerPercent ?? 70)
@@ -118,8 +133,14 @@ export function LiveChat({
     }
 
     fetchHistory()
+    // Live polling every 2.5 seconds so all viewers/streamers receive chat messages live without refreshing
+    const pollInterval = setInterval(fetchHistory, 2500)
+    window.addEventListener('focus', fetchHistory)
+
     return () => {
       isMounted = false
+      clearInterval(pollInterval)
+      window.removeEventListener('focus', fetchHistory)
     }
   }, [streamId])
 

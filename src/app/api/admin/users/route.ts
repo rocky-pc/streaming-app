@@ -29,17 +29,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    // Enrich with video and stream counts
+    // Enrich with video, stream counts, and lifetime streamer revenue
     const enrichedUsers = await Promise.all(
       (users || []).map(async (u) => {
-        const [{ count: videoCount }, { count: streamCount }] = await Promise.all([
+        const [{ count: videoCount }, { count: streamCount }, { data: earningsData }] = await Promise.all([
           supabase.from('videos').select('*', { count: 'exact', head: true }).eq('user_id', u.id),
           supabase.from('live_streams').select('*', { count: 'exact', head: true }).eq('user_id', u.id),
+          supabase.from('wallet_transactions').select('amount').eq('user_id', u.id).eq('type', 'streamer_earning'),
         ])
+        const totalEarnings = (earningsData || []).reduce((acc, row) => acc + (row.amount || 0), 0)
         return {
           ...u,
           videoCount: videoCount || 0,
           streamCount: streamCount || 0,
+          totalRevenue: totalEarnings,
         }
       })
     )

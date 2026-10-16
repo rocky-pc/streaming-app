@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
 
     const { data: messages, error } = await supabaseService
       .from('live_chat_messages')
-      .select('id, stream_id, user_id, message, created_at, profiles:user_id(id, username, display_name, avatar_url)')
+      .select('id, stream_id, user_id, message, created_at, paid_emoji, coins_paid, profiles:user_id(id, username, display_name, avatar_url)')
       .eq('stream_id', streamId)
       .order('created_at', { ascending: true })
       .limit(100)
@@ -103,8 +103,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message, messages: [] }, { status: 500 })
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const formattedMessages = (messages || []).map((m: any) => ({
+      ...m,
+      paidEmoji: m.paid_emoji || null,
+      coinsPaid: m.coins_paid || null,
+    }))
+
     return NextResponse.json({
-      messages: messages || [],
+      messages: formattedMessages,
       economics: {
         chatCost,
         streamerPercent,
@@ -286,8 +293,10 @@ export async function POST(request: NextRequest) {
         stream_id: streamId,
         user_id: user.id,
         message: cleanMessage,
+        paid_emoji: paidEmoji || null,
+        coins_paid: finalCost,
       })
-      .select('id, stream_id, user_id, message, created_at, profiles:user_id(id, username, display_name, avatar_url)')
+      .select('id, stream_id, user_id, message, created_at, paid_emoji, coins_paid, profiles:user_id(id, username, display_name, avatar_url)')
       .single()
 
     if (insertError || !newMsg) {
@@ -300,8 +309,8 @@ export async function POST(request: NextRequest) {
     // Enrich message response with paidEmoji metadata
     const enrichedMessage = {
       ...newMsg,
-      paidEmoji: paidEmoji || null,
-      coinsPaid: finalCost,
+      paidEmoji: newMsg.paid_emoji || paidEmoji || null,
+      coinsPaid: newMsg.coins_paid ?? finalCost,
     }
 
     return NextResponse.json(

@@ -18,6 +18,8 @@ import {
   Bell,
   Play,
   Upload,
+  TrendingUp,
+  Coins,
 } from 'lucide-react'
 import type { Profile, Video } from '@/types'
 import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
@@ -25,9 +27,14 @@ import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
 interface ProfileClientProps {
   profile: Profile
   initialVideos: Video[]
+  streamerRevenue?: number
 }
 
-export function ProfileClient({ profile: initialProfile, initialVideos }: ProfileClientProps) {
+export function ProfileClient({
+  profile: initialProfile,
+  initialVideos,
+  streamerRevenue = 0,
+}: ProfileClientProps) {
   const { user, refreshProfile } = useAuth()
   const { toast } = useToast()
 
@@ -147,21 +154,27 @@ export function ProfileClient({ profile: initialProfile, initialVideos }: Profil
                   </p>
                 )}
 
-                {/* User Wallet Coins and Live Chat Status */}
+                {/* User Wallet Coins, Streamer Revenue and Live Chat Status */}
                 <div className="flex flex-wrap items-center gap-2.5 pt-2">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-xs shadow-sm">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-xs shadow-sm" title="Your current wallet coin balance">
                     <span className="text-sm">🪙</span>
                     <span>{profile.coin_balance ?? 50} Coins</span>
+                  </div>
+
+                  {/* Streamer Revenue Badge */}
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs shadow-sm" title="Total coins earned from live streams and chat super emojis">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    <span>{streamerRevenue} Coins Earned</span>
                   </div>
 
                   <div
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
                       profile.chat_enabled !== false
-                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
                         : 'bg-red-500/10 border-red-500/20 text-red-400'
                     }`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full ${profile.chat_enabled !== false ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${profile.chat_enabled !== false ? 'bg-blue-400' : 'bg-red-500'}`} />
                     <span>{profile.chat_enabled !== false ? 'Live Chat Active' : 'Chat Muted by Admin'}</span>
                   </div>
                 </div>

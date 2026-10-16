@@ -65,6 +65,7 @@ export interface LiveStreamRow {
   room_name: string
   status: LiveStreamStatus
   visibility: LiveStreamVisibility
+  thumbnail_url?: string | null
   started_at: string | null
   ended_at: string | null
   created_at: string
@@ -163,6 +164,7 @@ export interface Database {
           room_name: string
           status?: LiveStreamStatus
           visibility?: LiveStreamVisibility
+          thumbnail_url?: string | null
           started_at?: string | null
           ended_at?: string | null
           created_at?: string
@@ -176,6 +178,7 @@ export interface Database {
           room_name?: string
           status?: LiveStreamStatus
           visibility?: LiveStreamVisibility
+          thumbnail_url?: string | null
           started_at?: string | null
           ended_at?: string | null
           created_at?: string
@@ -198,6 +201,8 @@ export interface Database {
           user_id: string
           message: string
           created_at: string
+          paid_emoji?: string | null
+          coins_paid?: number | null
         }
         Insert: {
           id?: string
@@ -205,6 +210,8 @@ export interface Database {
           user_id: string
           message: string
           created_at?: string
+          paid_emoji?: string | null
+          coins_paid?: number | null
         }
         Update: {
           id?: string
@@ -212,6 +219,8 @@ export interface Database {
           user_id?: string
           message?: string
           created_at?: string
+          paid_emoji?: string | null
+          coins_paid?: number | null
         }
         Relationships: [
           {

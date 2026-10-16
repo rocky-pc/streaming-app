@@ -91,28 +91,27 @@ function NavbarContent() {
   return (
     <>
       {/* Top Header Navbar */}
-      <header className="fixed top-0 left-0 right-0 z-40 h-14 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-[#272727] flex items-center px-4 justify-between select-none">
+      <header className="fixed top-0 left-0 right-0 z-40 h-14 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-[#272727] flex items-center px-2.5 sm:px-4 justify-between select-none">
         {/* Left Section: Menu Toggle & Brand Logo */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="w-10 h-10 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors focus:outline-none"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors focus:outline-none"
             aria-label="Toggle navigation menu"
           >
             <Menu className="h-5 w-5" />
           </button>
 
           {/* YouTube-Style Logo */}
-          <Link href="/" className="flex items-center gap-1.5 focus:outline-none group" aria-label="StreamFlow Home">
-            <div className="flex items-center justify-center w-8 h-6 bg-[#ff0000] rounded-lg shadow-sm transition-transform group-hover:scale-105">
-              {/* YouTube style play triangle */}
-              <div className="w-0 h-0 border-y-[4px] border-y-transparent border-l-[8px] border-l-white ml-0.5" />
+          <Link href="/" className="flex items-center gap-1.5 focus:outline-none group shrink-0" aria-label="StreamFlow Home">
+            <div className="flex items-center justify-center w-7 h-5 sm:w-8 sm:h-6 bg-[#ff0000] rounded sm:rounded-lg shadow-sm transition-transform group-hover:scale-105 shrink-0">
+              <div className="w-0 h-0 border-y-[3.5px] sm:border-y-[4px] border-y-transparent border-l-[7px] sm:border-l-[8px] border-l-white ml-0.5" />
             </div>
             <div className="flex items-center">
-              <span className="font-bold text-lg sm:text-xl tracking-tighter text-white font-sans">
+              <span className="font-bold text-base sm:text-xl tracking-tight text-white font-sans">
                 Stream<span className="text-zinc-400 font-medium">Flow</span>
               </span>
-              <span className="text-[9px] font-semibold text-zinc-500 uppercase ml-1 tracking-wider">
+              <span className="text-[8px] sm:text-[9px] font-semibold text-zinc-500 uppercase ml-0.5 sm:ml-1 tracking-wider">
                 IN
               </span>
             </div>
@@ -155,21 +154,21 @@ function NavbarContent() {
         </div>
 
         {/* Right Section: Upload, Mobile Search Icon & User Menu */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           {/* Mobile Search Toggle */}
           <button
             onClick={() => setIsMobileSearchOpen(!isMobileSearchOpen)}
-            className="md:hidden w-9 h-9 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors"
+            className="md:hidden w-8 h-8 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors"
             aria-label="Open search"
           >
-            <Search className="h-5 w-5" />
+            <Search className="h-4 w-4" />
           </button>
 
           {/* Upload Button */}
           {user ? (
             <Link
               href="/upload"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-sm font-medium rounded-full transition-colors"
+              className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors"
               title="Upload video"
             >
               <Plus className="h-4 w-4" />
@@ -178,7 +177,7 @@ function NavbarContent() {
           ) : (
             <Link
               href="/login?redirect=/upload"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-sm font-medium rounded-full transition-colors"
+              className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors"
               title="Upload video"
             >
               <Plus className="h-4 w-4" />
@@ -189,7 +188,7 @@ function NavbarContent() {
           {/* Go Live Button */}
           <Link
             href={user ? '/go-live' : '/login?redirect=/go-live'}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 text-sm font-semibold rounded-full transition-colors"
+            className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 text-xs sm:text-sm font-semibold rounded-full transition-colors"
             title="Go live"
           >
             <Radio className="h-3.5 w-3.5 animate-pulse text-red-500" />
@@ -200,11 +199,11 @@ function NavbarContent() {
           {user && (
             <Link
               href={profileUrl}
-              className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold rounded-full transition-colors"
+              className="flex items-center gap-1 px-2 sm:px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] sm:text-xs font-bold rounded-full transition-colors"
               title="Your Wallet Coins"
             >
-              <span>🪙</span>
-              <span>{profile?.coin_balance ?? 50}</span>
+              <span className="text-xs">🪙</span>
+              <span className="font-mono">{profile?.coin_balance ?? 50}</span>
             </Link>
           )}
 
@@ -337,27 +336,39 @@ function NavbarContent() {
 
       {/* Mobile Search Overlay Bar */}
       {isMobileSearchOpen && (
-        <div className="md:hidden fixed top-0 left-0 right-0 z-50 h-14 bg-[#0f0f0f] border-b border-[#272727] flex items-center px-3 gap-2 animate-slide-down">
+        <div className="md:hidden fixed top-0 left-0 right-0 z-50 h-14 bg-[#0f0f0f] border-b border-[#272727] flex items-center px-2.5 gap-2 shadow-2xl animate-slide-down">
           <button
             onClick={() => setIsMobileSearchOpen(false)}
-            className="w-10 h-10 flex items-center justify-center text-zinc-400 hover:text-white"
+            className="w-9 h-9 flex items-center justify-center rounded-full text-zinc-400 hover:text-white hover:bg-white/10 shrink-0"
             aria-label="Back"
           >
             <X className="h-5 w-5" />
           </button>
 
           <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center">
-            <input
-              autoFocus
-              type="search"
-              placeholder="Search videos..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#121212] text-white text-sm px-4 py-2 rounded-l-full border border-[#303030] focus:border-[#1c62b9] focus:outline-none placeholder-zinc-500"
-            />
+            <div className="relative flex-1">
+              <input
+                autoFocus
+                type="search"
+                placeholder="Search StreamFlow..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#161616] text-white text-xs pl-3.5 pr-8 py-2 rounded-l-full border border-[#303030] focus:border-[#1c62b9] focus:outline-none placeholder-zinc-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <button
               type="submit"
-              className="bg-[#222222] px-4 py-2 rounded-r-full border border-l-0 border-[#303030] text-zinc-300"
+              className="bg-[#272727] hover:bg-[#333333] px-4 py-2 rounded-r-full border border-l-0 border-[#303030] text-zinc-300 hover:text-white shrink-0"
               aria-label="Search"
             >
               <Search className="h-4 w-4" />

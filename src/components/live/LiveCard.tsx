@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { Radio, Users, Play } from 'lucide-react'
 import type { LiveStreamRow, ProfileRow } from '@/types/database'
@@ -9,6 +10,7 @@ interface LiveCardProps {
 }
 
 export function LiveCard({ stream }: LiveCardProps) {
+  const [thumbError, setThumbError] = useState(false)
   const profile = stream.profiles
   const displayName = profile?.display_name || 'Broadcaster'
   const username = profile?.username || 'user'
@@ -21,12 +23,21 @@ export function LiveCard({ stream }: LiveCardProps) {
         href={`/live/${stream.id}`}
         className="relative aspect-video w-full rounded-2xl overflow-hidden bg-gradient-to-br from-zinc-900 via-neutral-900 to-black border border-[#272727] group-hover:border-red-500/50 transition-all shadow-md group-hover:shadow-red-950/20"
       >
-        {/* Animated Background Graphic */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-80 group-hover:scale-105 transition-transform duration-500">
-          <div className="w-20 h-20 rounded-full bg-red-600/10 flex items-center justify-center">
-            <Radio className="h-10 w-10 text-red-500 animate-pulse" />
+        {/* Stream Thumbnail (Custom uploaded or Fallback Graphic) */}
+        {stream.thumbnail_url && !thumbError ? (
+          <img
+            src={stream.thumbnail_url}
+            alt={stream.title}
+            onError={() => setThumbError(true)}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center opacity-80 group-hover:scale-105 transition-transform duration-500">
+            <div className="w-20 h-20 rounded-full bg-red-600/10 flex items-center justify-center">
+              <Radio className="h-10 w-10 text-red-500 animate-pulse" />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Top Left LIVE Badge */}
         <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5 px-2.5 py-1 bg-red-600/95 backdrop-blur-md rounded-md text-white text-[11px] font-bold tracking-wider uppercase shadow-md">
