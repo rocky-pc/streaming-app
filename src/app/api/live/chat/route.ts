@@ -122,7 +122,10 @@ export async function GET(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const formattedMessages = messages.map((m: any) => ({
       ...m,
-      paidEmoji: m.paid_emoji || null,
+      paidEmoji:
+        m.paid_emoji && typeof m.paid_emoji === 'string' && m.paid_emoji.trim().length > 0
+          ? m.paid_emoji.trim()
+          : null,
       coinsPaid: m.coins_paid || null,
     }))
 
@@ -158,7 +161,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { streamId, message, paidEmoji, emojiCost } = body || {}
 
-    if (!streamId || (!message && !paidEmoji)) {
+    const validPaidEmoji =
+      paidEmoji && typeof paidEmoji === 'string' && paidEmoji.trim().length > 0
+        ? paidEmoji.trim()
+        : null
+
+    if (!streamId || (!message && !validPaidEmoji)) {
       return NextResponse.json(
         { error: 'streamId and message or paidEmoji are required.' },
         { status: 400 }
@@ -166,8 +174,8 @@ export async function POST(request: NextRequest) {
     }
 
     let cleanMessage = (message || '').trim().slice(0, 300)
-    if (paidEmoji && !cleanMessage) {
-      cleanMessage = `${paidEmoji} Sent Super Emoji!`
+    if (validPaidEmoji && !cleanMessage) {
+      cleanMessage = `${validPaidEmoji} Sent Super Emoji!`
     }
 
     const supabaseService = getServiceRoleClient()
@@ -201,7 +209,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate actual cost: either paid emoji price or standard chat cost
     let finalCost = defaultCost
-    if (paidEmoji) {
+    if (validPaidEmoji) {
       finalCost = Math.max(0, parseInt(emojiCost, 10) || 5)
     }
 
@@ -216,7 +224,7 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         message: cleanMessage,
         created_at: new Date().toISOString(),
-        paidEmoji: paidEmoji || null,
+        paidEmoji: validPaidEmoji,
         coinsPaid: finalCost,
         profiles: {
           id: user.id,
@@ -225,7 +233,7 @@ export async function POST(request: NextRequest) {
           avatar_url: user.user_metadata?.avatar_url || null,
         },
       }
-      return NextResponse.json({ message: mockMsg, remainingCoins, coinsPaid: finalCost, paidEmoji }, { status: 201 })
+      return NextResponse.json({ message: mockMsg, remainingCoins, coinsPaid: finalCost, paidEmoji: validPaidEmoji }, { status: 201 })
     }
 
     // 3. Process coin deduction if cost > 0
@@ -255,8 +263,8 @@ export async function POST(request: NextRequest) {
         amount: -finalCost,
         type: 'chat_fee',
         related_stream_id: streamId,
-        description: paidEmoji
-          ? `Super Emoji ${paidEmoji} (${finalCost} coins)`
+        description: validPaidEmoji
+          ? `Super Emoji ${validPaidEmoji} (${finalCost} coins)`
           : `Live chat message fee (${finalCost} coins)`,
       })
 
@@ -291,8 +299,8 @@ export async function POST(request: NextRequest) {
               amount: streamerEarnings,
               type: 'streamer_earning',
               related_stream_id: streamId,
-              description: paidEmoji
-                ? `Super Emoji ${paidEmoji} streamer share (${streamerPercent}%)`
+              description: validPaidEmoji
+                ? `Super Emoji ${validPaidEmoji} streamer share (${streamerPercent}%)`
                 : `Viewer chat revenue share (${streamerPercent}%)`,
             })
           }
@@ -309,7 +317,7 @@ export async function POST(request: NextRequest) {
         stream_id: streamId,
         user_id: user.id,
         message: cleanMessage,
-        paid_emoji: paidEmoji || null,
+        paid_emoji: validPaidEmoji,
         coins_paid: finalCost,
       })
       .select('id, stream_id, user_id, message, created_at, paid_emoji, coins_paid, profiles:user_id(id, username, display_name, avatar_url)')
@@ -345,7 +353,7 @@ export async function POST(request: NextRequest) {
     // Enrich message response with paidEmoji metadata
     const enrichedMessage = {
       ...newMsg,
-      paidEmoji: newMsg.paid_emoji || paidEmoji || null,
+      paidEmoji: newMsg.paid_emoji || validPaidEmoji,
       coinsPaid: newMsg.coins_paid ?? finalCost,
     }
 
@@ -354,7 +362,7 @@ export async function POST(request: NextRequest) {
         message: enrichedMessage,
         remainingCoins,
         chatCost: finalCost,
-        paidEmoji: paidEmoji || null,
+        paidEmoji: validPaidEmoji,
       },
       { status: 201 }
     )

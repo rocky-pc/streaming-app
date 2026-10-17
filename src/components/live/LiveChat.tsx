@@ -103,9 +103,16 @@ export function LiveChat({
                 for (const m of prev) {
                   map.set(m.id, m)
                 }
+                let hasNew = false
                 // Merge incoming server messages
                 for (const m of json.messages) {
-                  map.set(m.id, m)
+                  if (!map.has(m.id)) {
+                    map.set(m.id, m)
+                    hasNew = true
+                  }
+                }
+                if (!hasNew && map.size === prev.length) {
+                  return prev
                 }
                 return Array.from(map.values()).sort(
                   (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -180,21 +187,30 @@ export function LiveChat({
     }
   }, [room])
 
-  // Auto-scroll to bottom unless viewer has manually scrolled up
+  // Auto-scroll to bottom inside the chat container ONLY (never scrolls window/page)
   const scrollToBottom = useCallback((smooth = true) => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({
-        behavior: smooth ? 'smooth' : 'auto',
-        block: 'end',
-      })
+    const el = scrollContainerRef.current
+    if (el) {
+      if (smooth) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      } else {
+        el.scrollTop = el.scrollHeight
+      }
     }
   }, [])
 
+  const prevCountRef = useRef(0)
+
+  // Auto-scroll only when user is not scrolled up and new messages arrive
   useEffect(() => {
     if (!isScrolledUp) {
-      scrollToBottom(false)
+      const isNew = messages.length > prevCountRef.current
+      if (isNew || prevCountRef.current === 0) {
+        scrollToBottom(prevCountRef.current > 0)
+      }
     }
-  }, [messages, isScrolledUp, scrollToBottom])
+    prevCountRef.current = messages.length
+  }, [messages.length, isScrolledUp, scrollToBottom])
 
   // Track scroll position to pause auto-scroll
   const handleScroll = () => {
@@ -300,7 +316,15 @@ export function LiveChat({
         if (json.message) {
           // Replace optimistic ID with persistent ID
           setMessages((prev) =>
-            prev.map((m) => (m.id === tempId ? { ...json.message, paidEmoji: selectedPaidEmoji?.emoji, coinsPaid: requiredCoins } : m))
+            prev.map((m) =>
+              m.id === tempId
+                ? {
+                    ...json.message,
+                    paidEmoji: selectedPaidEmoji?.emoji || null,
+                    coinsPaid: requiredCoins > 0 ? requiredCoins : null,
+                  }
+                : m
+            )
           )
         }
         if (json.remainingCoins !== undefined) {
@@ -391,7 +415,9 @@ export function LiveChat({
             const displayName =
               msg.profiles?.display_name || msg.profiles?.username || 'Viewer'
             const avatarUrl = msg.profiles?.avatar_url
-            const isPaidSuperEmoji = Boolean(msg.paidEmoji || (msg.coinsPaid && msg.coinsPaid > 0))
+            const isPaidSuperEmoji = Boolean(
+              msg.paidEmoji && typeof msg.paidEmoji === 'string' && msg.paidEmoji.trim().length > 0
+            )
 
             // RENDER PAID SUPER EMOJI (YOUTUBE SUPER CHAT STYLE)
             if (isPaidSuperEmoji) {
@@ -440,7 +466,7 @@ export function LiveChat({
 
                       {/* Prominent Paid Emoji Sticker */}
                       <span className="text-3xl sm:text-4xl filter drop-shadow-md shrink-0 select-none animate-pulse">
-                        {msg.paidEmoji || '⭐'}
+                        {msg.paidEmoji}
                       </span>
                     </div>
                   </div>
@@ -491,6 +517,13 @@ export function LiveChat({
                     <span className="text-[10px] text-zinc-600">
                       {formatChatTime(msg.created_at)}
                     </span>
+
+                    {Boolean(msg.coinsPaid && msg.coinsPaid > 0) && (
+                      <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-400 font-mono">
+                        <span>🪙</span>
+                        <span>{msg.coinsPaid}</span>
+                      </span>
+                    )}
                   </div>
 
                   {/* Text Content */}

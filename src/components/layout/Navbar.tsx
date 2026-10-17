@@ -161,37 +161,37 @@ function NavbarContent() {
           {/* Mobile Search Toggle */}
           <button
             onClick={() => setIsMobileSearchOpen(!isMobileSearchOpen)}
-            className="md:hidden w-8 h-8 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors"
+            className="md:hidden w-8 h-8 flex items-center justify-center rounded-full text-white hover:bg-white/10 transition-colors shrink-0"
             aria-label="Open search"
           >
             <Search className="h-4 w-4" />
           </button>
 
-          {/* Upload Button */}
+          {/* Upload Button: hidden on mobile, visible on sm+ (mobile has central + button in bottom navigation) */}
           {user ? (
             <Link
               href="/upload"
-              className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors"
+              className="hidden sm:flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors shrink-0"
               title="Upload video"
             >
               <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">Create</span>
+              <span>Create</span>
             </Link>
           ) : (
             <Link
               href="/login?redirect=/upload"
-              className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors"
+              className="hidden sm:flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#272727] hover:bg-[#383838] text-white text-xs sm:text-sm font-medium rounded-full transition-colors shrink-0"
               title="Upload video"
             >
               <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">Create</span>
+              <span>Create</span>
             </Link>
           )}
 
           {/* Go Live Button */}
           <Link
             href={user ? '/go-live' : '/login?redirect=/go-live'}
-            className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 text-xs sm:text-sm font-semibold rounded-full transition-colors"
+            className="flex items-center justify-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 text-xs sm:text-sm font-semibold rounded-full transition-colors shrink-0"
             title="Go live"
           >
             <Radio className="h-3.5 w-3.5 animate-pulse text-red-500" />
@@ -203,23 +203,22 @@ function NavbarContent() {
             <button
               type="button"
               onClick={() => setIsTopupModalOpen(true)}
-              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] sm:text-xs font-bold rounded-full transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] sm:text-xs font-bold rounded-full transition-colors cursor-pointer shrink-0"
               title="Your Wallet Coins • Click to Top-Up via UPI"
             >
               <span className="text-xs">🪙</span>
               <span className="font-mono">{profile?.coin_balance ?? 50}</span>
-              <span className="text-[10px] text-amber-400 font-extrabold ml-0.5 opacity-80">+</span>
             </button>
           )}
 
           {/* User Account / Profile */}
           {isLoading ? (
-            <div className="w-8 h-8 rounded-full bg-zinc-800 animate-pulse" />
+            <div className="w-8 h-8 rounded-full bg-zinc-800 animate-pulse shrink-0" />
           ) : user ? (
-            <div className="relative" ref={dropdownRef}>
+            <div className="relative shrink-0" ref={dropdownRef}>
               <button
                 onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="w-8 h-8 rounded-full overflow-hidden focus:outline-none focus:ring-2 focus:ring-white/40 ring-1 ring-zinc-700 hover:ring-zinc-500 transition-all flex items-center justify-center"
+                className="w-8 h-8 rounded-full overflow-hidden focus:outline-none focus:ring-2 focus:ring-white/40 ring-1 ring-zinc-700 hover:ring-zinc-500 transition-all flex items-center justify-center shrink-0"
                 aria-label="Account menu"
                 aria-expanded={isProfileDropdownOpen}
               >
@@ -234,7 +233,7 @@ function NavbarContent() {
 
               {/* YouTube Style Account Dropdown */}
               {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-[#282828] border border-[#3e3e3e] shadow-2xl py-2 z-50 animate-slide-up text-[#f1f1f1]">
+                <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl bg-[#282828] border border-[#3e3e3e] shadow-2xl py-2 z-50 animate-slide-up text-[#f1f1f1]">
                   {/* Account Header */}
                   <div className="flex items-start gap-3 px-4 py-3 border-b border-[#3e3e3e]">
                     {userAvatar ? (
@@ -348,7 +347,7 @@ function NavbarContent() {
             /* YouTube Classic "Sign in" Pill Button */
             <Link
               href="/login"
-              className="flex items-center gap-2 px-3 py-1.5 border border-[#3ea6ff]/40 text-[#3ea6ff] hover:bg-[#3ea6ff]/10 text-sm font-semibold rounded-full transition-colors"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 border border-[#3ea6ff]/40 text-[#3ea6ff] hover:bg-[#3ea6ff]/10 text-xs sm:text-sm font-semibold rounded-full transition-colors shrink-0"
             >
               <User className="h-4 w-4" />
               <span>Sign in</span>
