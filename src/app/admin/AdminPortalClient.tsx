@@ -40,6 +40,10 @@ import {
   ToggleRight,
   X,
   TrendingUp,
+  CreditCard,
+  Copy,
+  QrCode,
+  XCircle,
 } from 'lucide-react'
 import { formatFileSize, formatRelativeTime, formatDuration, formatDate } from '@/lib/utils'
 
@@ -163,7 +167,33 @@ interface AdminChat {
   } | null
 }
 
-type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'settings'
+interface AdminTopupRequest {
+  id: string
+  user_id: string
+  coins: number
+  amount_inr: number
+  utr_number: string
+  upi_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
+  profiles?: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+    coin_balance: number
+  } | null
+}
+
+interface AdminUpiSettings {
+  admin_upi_id: string
+  admin_upi_name: string
+  coin_price_inr: number
+}
+
+type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'topups' | 'settings'
 
 export default function AdminPortalClient() {
   // Authentication State
@@ -189,6 +219,24 @@ export default function AdminPortalClient() {
     paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
 
+  // Top-Up & UPI Transactions State
+  const [topupRequests, setTopupRequests] = useState<AdminTopupRequest[]>([])
+  const [upiSettings, setUpiSettings] = useState<AdminUpiSettings>({
+    admin_upi_id: 'streamflow@upi',
+    admin_upi_name: 'StreamFlow Official',
+    coin_price_inr: 1,
+  })
+  const [upiForm, setUpiForm] = useState<AdminUpiSettings>({
+    admin_upi_id: 'streamflow@upi',
+    admin_upi_name: 'StreamFlow Official',
+    coin_price_inr: 1,
+  })
+  const [isSavingUpiSettings, setIsSavingUpiSettings] = useState(false)
+  const [processingTopupId, setProcessingTopupId] = useState<string | null>(null)
+  const [decliningRequest, setDecliningRequest] = useState<AdminTopupRequest | null>(null)
+  const [declineReasonInput, setDeclineReasonInput] = useState('Payment verification failed / Invalid UTR')
+  const [copiedUtr, setCopiedUtr] = useState<string | null>(null)
+
   const [isLoadingData, setIsLoadingData] = useState(false)
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -199,6 +247,8 @@ export default function AdminPortalClient() {
   const [videoFilter, setVideoFilter] = useState<'all' | 'public' | 'unlisted' | 'private'>('all')
   const [videoSearch, setVideoSearch] = useState('')
   const [chatSearch, setChatSearch] = useState('')
+  const [topupFilter, setTopupFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [topupSearch, setTopupSearch] = useState('')
   const [selectedChatStream, setSelectedChatStream] = useState<string>('all')
 
   // Modals / Action Confirmations
@@ -354,6 +404,17 @@ export default function AdminPortalClient() {
         const chatsData = await chatsRes.json()
         setChats(chatsData.messages || [])
       }
+
+      // 7. Fetch Topup Requests & UPI Settings
+      const topupRes = await fetch('/api/admin/topup')
+      if (topupRes.ok) {
+        const topupData = await topupRes.json()
+        setTopupRequests(topupData.requests || [])
+        if (topupData.settings) {
+          setUpiSettings(topupData.settings)
+          setUpiForm(topupData.settings)
+        }
+      }
     } catch (err) {
       console.error('Error fetching admin data:', err)
       setActionNotice({ type: 'error', message: 'Failed to refresh telemetry' })
@@ -383,6 +444,24 @@ export default function AdminPortalClient() {
       }
     }
     const interval = setInterval(pollChats, 3500)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, activeTab])
+
+  // Live real-time topup requests polling for Admin without requiring page refresh
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'topups') return
+    const pollTopups = async () => {
+      try {
+        const res = await fetch('/api/admin/topup')
+        if (res.ok) {
+          const data = await res.json()
+          setTopupRequests(data.requests || [])
+        }
+      } catch {
+        // silent polling error
+      }
+    }
+    const interval = setInterval(pollTopups, 3500)
     return () => clearInterval(interval)
   }, [isAuthenticated, activeTab])
 
@@ -476,6 +555,103 @@ export default function AdminPortalClient() {
       setActionNotice({ type: 'error', message: 'Error saving settings' })
     } finally {
       setIsSavingSettings(false)
+    }
+  }
+
+  // -------------------------------------------------------------
+  // TOP-UP & UPI SETTINGS HANDLERS
+  // -------------------------------------------------------------
+  const handleSaveUpiSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setIsSavingUpiSettings(true)
+    try {
+      const res = await fetch('/api/admin/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_settings',
+          admin_upi_id: upiForm.admin_upi_id,
+          admin_upi_name: upiForm.admin_upi_name,
+          coin_price_inr: upiForm.coin_price_inr,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setUpiSettings(upiForm)
+        setActionNotice({ type: 'success', message: data.message || 'UPI Settings saved!' })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to save UPI settings' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to update UPI settings' })
+    } finally {
+      setIsSavingUpiSettings(false)
+    }
+  }
+
+  const handleApproveTopup = async (requestId: string) => {
+    setProcessingTopupId(requestId)
+    try {
+      const res = await fetch('/api/admin/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', requestId }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setActionNotice({ type: 'success', message: data.message || 'Top-up approved and coins credited!' })
+        setTopupRequests((prev) =>
+          prev.map((r) =>
+            r.id === requestId
+              ? { ...r, status: 'approved', admin_notes: 'Payment verified by Admin' }
+              : r
+          )
+        )
+        loadDashboardData()
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to approve top-up' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Network error approving top-up' })
+    } finally {
+      setProcessingTopupId(null)
+    }
+  }
+
+  const handleDeclineTopup = async (requestId: string, reason?: string) => {
+    setProcessingTopupId(requestId)
+    try {
+      const res = await fetch('/api/admin/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'decline',
+          requestId,
+          reason: reason || 'Payment could not be verified with UTR reference.',
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setActionNotice({ type: 'success', message: data.message || 'Top-up request declined' })
+        setTopupRequests((prev) =>
+          prev.map((r) =>
+            r.id === requestId
+              ? {
+                  ...r,
+                  status: 'rejected',
+                  admin_notes: reason || 'Payment could not be verified with UTR reference.',
+                }
+              : r
+          )
+        )
+        setDecliningRequest(null)
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to decline top-up' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Network error declining top-up' })
+    } finally {
+      setProcessingTopupId(null)
     }
   }
 
@@ -745,6 +921,26 @@ export default function AdminPortalClient() {
 
   const totalCirculatingCoins = users.reduce((acc, u) => acc + (u.coin_balance || 0), 0)
   const totalStreamerRevenue = users.reduce((acc, u) => acc + (u.totalRevenue || 0), 0)
+
+  const filteredTopups = topupRequests.filter((r) => {
+    if (topupFilter !== 'all' && r.status !== topupFilter) return false
+    if (topupSearch) {
+      const q = topupSearch.toLowerCase()
+      const utrMatch = r.utr_number.toLowerCase().includes(q)
+      const userMatch = r.profiles?.username?.toLowerCase().includes(q) || false
+      const nameMatch = r.profiles?.display_name?.toLowerCase().includes(q) || false
+      return utrMatch || userMatch || nameMatch
+    }
+    return true
+  })
+
+  const pendingTopupsCount = topupRequests.filter((r) => r.status === 'pending').length
+  const totalTopupInr = topupRequests
+    .filter((r) => r.status === 'approved')
+    .reduce((acc, r) => acc + (Number(r.amount_inr) || 0), 0)
+  const totalTopupCoins = topupRequests
+    .filter((r) => r.status === 'approved')
+    .reduce((acc, r) => acc + (r.coins || 0), 0)
 
   // Loading initial state
   if (isAuthenticated === null) {
@@ -1048,6 +1244,26 @@ export default function AdminPortalClient() {
             <span>Live Chats</span>
             {stats && (
               <span className="text-xs text-zinc-400 font-normal">({stats.totalChats})</span>
+            )}
+          </button>
+
+          {/* Top-Up Requests & UPI Settings Tab */}
+          <button
+            onClick={() => setActiveTab('topups')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              activeTab === 'topups'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-600/25'
+                : 'text-zinc-400 hover:text-white hover:bg-[#1f1f1f]'
+            }`}
+          >
+            <CreditCard className="h-4 w-4" />
+            <span>Top-Up & UPI</span>
+            {pendingTopupsCount > 0 ? (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-400 text-black font-extrabold animate-pulse">
+                {pendingTopupsCount}
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-400 font-normal">({topupRequests.length})</span>
             )}
           </button>
 
@@ -2232,7 +2448,440 @@ export default function AdminPortalClient() {
             </div>
           </div>
         )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 7: TOP-UP REQUESTS & UPI CONFIGURATION */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'topups' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Top KPI Metrics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Pending Requests
+                  </span>
+                  <span className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <Clock className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-amber-400">{pendingTopupsCount}</span>
+                  <span className="text-xs text-zinc-500">awaiting review</span>
+                </div>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Total Approved Coins
+                  </span>
+                  <span className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                    <Coins className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-white">🪙 {totalTopupCoins}</span>
+                  <span className="text-xs text-emerald-400">credited</span>
+                </div>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Top-Up Volume (INR)
+                  </span>
+                  <span className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+                    <CreditCard className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-emerald-400">₹{totalTopupInr}</span>
+                  <span className="text-xs text-zinc-500">verified</span>
+                </div>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Exchange Rate
+                  </span>
+                  <span className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
+                    <Percent className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xl font-black text-white">1 Coin = ₹{upiSettings.coin_price_inr}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* UPI & Exchange Rate Configuration Form (Editable by Admin) */}
+            <form
+              onSubmit={handleSaveUpiSettings}
+              className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-4"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#272727]">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <QrCode className="h-5 w-5 text-amber-400" />
+                    <span>Admin UPI Payment Gateway Settings</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    This UPI ID and coin exchange rate are displayed to all normal users when requesting a wallet top-up.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingUpiSettings}
+                  className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-red-600/20 disabled:opacity-50 flex items-center justify-center gap-2 self-start sm:self-auto"
+                >
+                  {isSavingUpiSettings ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Saving Settings...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Save UPI Settings</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 block">
+                    Admin UPI ID (VPA Address)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={upiForm.admin_upi_id}
+                    onChange={(e) => setUpiForm((prev) => ({ ...prev, admin_upi_id: e.target.value }))}
+                    placeholder="e.g. streamflow@upi"
+                    className="w-full bg-[#121212] border border-[#2f2f2f] focus:border-red-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+                  />
+                  <span className="text-[10px] text-zinc-500 block">
+                    Users will transfer INR to this UPI ID.
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 block">
+                    Payee Display Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={upiForm.admin_upi_name}
+                    onChange={(e) => setUpiForm((prev) => ({ ...prev, admin_upi_name: e.target.value }))}
+                    placeholder="e.g. StreamFlow Official"
+                    className="w-full bg-[#121212] border border-[#2f2f2f] focus:border-red-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                  />
+                  <span className="text-[10px] text-zinc-500 block">
+                    Shown inside user&apos;s UPI app (GPay, PhonePe, Paytm).
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 block">
+                    Coin Exchange Rate (1 Coin = ? INR)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={upiForm.coin_price_inr}
+                      onChange={(e) =>
+                        setUpiForm((prev) => ({
+                          ...prev,
+                          coin_price_inr: parseFloat(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full bg-[#121212] border border-[#2f2f2f] focus:border-red-500 rounded-xl pl-8 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-bold"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">₹</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 block">
+                    e.g. 1 means 100 coins = ₹100 INR.
+                  </span>
+                </div>
+              </div>
+            </form>
+
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#181818] border border-[#272727] p-4 rounded-2xl">
+              <div className="flex items-center gap-2 flex-1 max-w-md">
+                <div className="relative flex-1">
+                  <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    type="text"
+                    value={topupSearch}
+                    onChange={(e) => setTopupSearch(e.target.value)}
+                    placeholder="Search by username or UTR reference..."
+                    className="w-full bg-[#121212] border border-[#2c2c2c] rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 transition-colors"
+                  />
+                </div>
+
+                <select
+                  value={topupFilter}
+                  onChange={(e) =>
+                    setTopupFilter(e.target.value as 'all' | 'pending' | 'approved' | 'rejected')
+                  }
+                  className="bg-[#121212] border border-[#2c2c2c] text-xs text-zinc-200 rounded-xl px-3 py-2 focus:outline-none focus:border-red-500"
+                >
+                  <option value="all">All Statuses ({topupRequests.length})</option>
+                  <option value="pending">Pending ({pendingTopupsCount})</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Declined</option>
+                </select>
+              </div>
+
+              <div className="text-xs text-zinc-400 flex items-center gap-2">
+                <span>Matching Requests: <strong className="text-white">{filteredTopups.length}</strong></span>
+              </div>
+            </div>
+
+            {/* Topup Requests Table */}
+            {filteredTopups.length === 0 ? (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl p-12 text-center text-zinc-500 space-y-2">
+                <CreditCard className="h-8 w-8 mx-auto text-zinc-600 mb-2" />
+                <p className="text-sm font-semibold text-zinc-400">No top-up requests found</p>
+                <p className="text-xs">User submitted UPI top-ups with UTR numbers will appear here for verification</p>
+              </div>
+            ) : (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#202020] text-zinc-400 uppercase tracking-wider text-[11px] border-b border-[#272727]">
+                      <tr>
+                        <th className="py-3 px-4">User</th>
+                        <th className="py-3 px-4">Coins Requested</th>
+                        <th className="py-3 px-4">Amount (INR)</th>
+                        <th className="py-3 px-4">UTR Reference</th>
+                        <th className="py-3 px-4">Submitted</th>
+                        <th className="py-3 px-4 text-center">Status</th>
+                        <th className="py-3 px-4 text-right">Admin Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#272727]">
+                      {filteredTopups.map((r) => (
+                        <tr key={r.id} className="hover:bg-white/[0.02] transition-colors">
+                          {/* User */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              {r.profiles?.avatar_url ? (
+                                <Image
+                                  src={r.profiles.avatar_url}
+                                  alt={r.profiles.username}
+                                  width={32}
+                                  height={32}
+                                  className="rounded-full object-cover shrink-0"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-600 to-yellow-500 flex items-center justify-center font-bold text-xs text-black shrink-0">
+                                  {(r.profiles?.username || 'U')[0].toUpperCase()}
+                                </div>
+                              )}
+                              <div>
+                                <span className="font-semibold text-white block">
+                                  {r.profiles?.display_name || r.profiles?.username || 'User'}
+                                </span>
+                                <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                                  <span>@{r.profiles?.username || 'user'}</span>
+                                  <span>•</span>
+                                  <span className="text-amber-400 font-bold">🪙 {r.profiles?.coin_balance ?? 0}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Coins */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 font-extrabold text-xs">
+                              <span>🪙</span>
+                              <span>{r.coins} Coins</span>
+                            </span>
+                          </td>
+
+                          {/* Amount INR */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className="font-bold text-white text-xs">
+                              ₹{r.amount_inr} INR
+                            </span>
+                          </td>
+
+                          {/* UTR */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5 font-mono text-zinc-300">
+                              <span className="bg-[#121212] px-2 py-1 rounded-lg border border-[#2e2e2e] select-all">
+                                {r.utr_number}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(r.utr_number)
+                                  setCopiedUtr(r.utr_number)
+                                  setTimeout(() => setCopiedUtr(null), 2000)
+                                }}
+                                title="Copy UTR to clipboard"
+                                className="p-1 hover:text-white text-zinc-500 transition-colors"
+                              >
+                                {copiedUtr === r.utr_number ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </td>
+
+                          {/* Submitted */}
+                          <td className="py-3 px-4 whitespace-nowrap text-zinc-400 text-[11px]">
+                            {formatRelativeTime(r.created_at)}
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-3 px-4 whitespace-nowrap text-center">
+                            {r.status === 'pending' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[11px] font-bold">
+                                <Clock className="h-3 w-3 animate-pulse" />
+                                <span>Pending</span>
+                              </span>
+                            )}
+                            {r.status === 'approved' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold">
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span>Approved</span>
+                              </span>
+                            )}
+                            {r.status === 'rejected' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/30 text-[11px] font-bold" title={r.admin_notes || ''}>
+                                <XCircle className="h-3 w-3" />
+                                <span>Declined</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-3 px-4 whitespace-nowrap text-right space-x-2">
+                            {r.status === 'pending' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={processingTopupId === r.id}
+                                  onClick={() => handleApproveTopup(r.id)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-xl transition-colors shadow-sm disabled:opacity-50"
+                                >
+                                  {processingTopupId === r.id ? (
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-3.5 w-3.5" />
+                                  )}
+                                  <span>Approve & Credit</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={processingTopupId === r.id}
+                                  onClick={() => {
+                                    setDecliningRequest(r)
+                                    setDeclineReasonInput('Payment verification failed / Invalid UTR')
+                                  }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/25 rounded-xl transition-colors disabled:opacity-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  <span>Decline</span>
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-zinc-500 italic">
+                                {r.admin_notes || (r.status === 'approved' ? 'Coins Credited' : 'Declined')}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* DECLINE TOP-UP MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {decliningRequest && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#181818] border border-[#2e2e2e] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-red-500/20 text-red-400">
+                  <XCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Decline Top-Up Request</h4>
+                  <p className="text-xs text-zinc-400">
+                    User: <strong className="text-white">@{decliningRequest.profiles?.username || 'user'}</strong> (UTR: {decliningRequest.utr_number})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDecliningRequest(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-zinc-300 block mb-1">
+                  Reason for Decline
+                </label>
+                <input
+                  type="text"
+                  value={declineReasonInput}
+                  onChange={(e) => setDeclineReasonInput(e.target.value)}
+                  placeholder="e.g. Invalid UTR or payment not received"
+                  className="w-full bg-[#121212] border border-[#333] focus:border-red-500 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDecliningRequest(null)}
+                  className="px-4 py-2 text-xs font-semibold bg-[#242424] hover:bg-[#2c2c2c] text-zinc-300 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={processingTopupId === decliningRequest.id}
+                  onClick={() => handleDeclineTopup(decliningRequest.id, declineReasonInput)}
+                  className="px-4 py-2 text-xs font-bold bg-red-600 hover:bg-red-500 text-white rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-red-600/20 disabled:opacity-50"
+                >
+                  {processingTopupId === decliningRequest.id ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <X className="h-3.5 w-3.5" />
+                  )}
+                  <span>Confirm Decline</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* MANAGE USER COINS MODAL */}

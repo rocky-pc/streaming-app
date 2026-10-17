@@ -20,8 +20,10 @@ import {
   ExternalLink,
   Radio,
   Shield,
+  Coins,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { TopUpModal } from '@/components/wallet/TopUpModal'
 
 function NavbarContent() {
   const pathname = usePathname()
@@ -32,6 +34,7 @@ function NavbarContent() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false)
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false)
+  const [isTopupModalOpen, setIsTopupModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -197,14 +200,16 @@ function NavbarContent() {
 
           {/* User Coin Balance */}
           {user && (
-            <Link
-              href={profileUrl}
-              className="flex items-center gap-1 px-2 sm:px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] sm:text-xs font-bold rounded-full transition-colors"
-              title="Your Wallet Coins"
+            <button
+              type="button"
+              onClick={() => setIsTopupModalOpen(true)}
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] sm:text-xs font-bold rounded-full transition-colors cursor-pointer"
+              title="Your Wallet Coins • Click to Top-Up via UPI"
             >
               <span className="text-xs">🪙</span>
               <span className="font-mono">{profile?.coin_balance ?? 50}</span>
-            </Link>
+              <span className="text-[10px] text-amber-400 font-extrabold ml-0.5 opacity-80">+</span>
+            </button>
           )}
 
           {/* User Account / Profile */}
@@ -303,6 +308,24 @@ function NavbarContent() {
                       <Radio className="h-5 w-5 text-red-500" />
                       <span>Go Live Studio</span>
                     </Link>
+
+                    {/* Top-Up Wallet Coins (Requested Feature) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileDropdownOpen(false)
+                        setIsTopupModalOpen(true)
+                      }}
+                      className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[#383838] transition-colors text-amber-400 text-left cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Coins className="h-5 w-5 text-amber-400 group-hover:scale-110 transition-transform" />
+                        <span className="font-semibold text-white">Top-Up Wallet</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">
+                        ₹ UPI
+                      </span>
+                    </button>
                   </div>
 
                   {/* Sign Out */}
@@ -483,6 +506,23 @@ function NavbarContent() {
                     <span>Go Live Studio</span>
                   </Link>
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSidebarOpen(false)
+                      setIsTopupModalOpen(true)
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-amber-400 hover:bg-[#272727] transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-4">
+                      <Coins className="h-5 w-5 text-amber-400" />
+                      <span className="text-white">Top-Up Wallet</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">
+                      ₹ UPI
+                    </span>
+                  </button>
+
                   <div className="my-2 border-t border-[#272727]" />
 
                   <button
@@ -576,6 +616,12 @@ function NavbarContent() {
           <span className="text-[10px] font-medium">{user ? 'You' : 'Sign in'}</span>
         </Link>
       </nav>
+
+      {/* Wallet Coin Top-Up Modal */}
+      <TopUpModal
+        isOpen={isTopupModalOpen}
+        onClose={() => setIsTopupModalOpen(false)}
+      />
     </>
   )
 }

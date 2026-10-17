@@ -73,6 +73,22 @@ export interface LiveStreamRow {
   profiles?: ProfileRow | null
 }
 
+export type TopupStatus = 'pending' | 'approved' | 'rejected'
+
+export interface TopupRequestRow {
+  id: string
+  user_id: string
+  coins: number
+  amount_inr: number
+  utr_number: string
+  upi_id: string
+  status: TopupStatus
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
+  profiles?: ProfileRow | null
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -232,6 +248,42 @@ export interface Database {
           },
           {
             foreignKeyName: "live_chat_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      topup_requests: {
+        Row: TopupRequestRow
+        Insert: {
+          id?: string
+          user_id: string
+          coins: number
+          amount_inr: number
+          utr_number: string
+          upi_id: string
+          status?: 'pending' | 'approved' | 'rejected'
+          admin_notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          coins?: number
+          amount_inr?: number
+          utr_number?: string
+          upi_id?: string
+          status?: 'pending' | 'approved' | 'rejected'
+          admin_notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "topup_requests_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
