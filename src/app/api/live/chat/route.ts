@@ -92,19 +92,35 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const { data: messages, error } = await supabaseService
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let messages: any[] = []
+
+    const primaryQuery = await supabaseService
       .from('live_chat_messages')
       .select('id, stream_id, user_id, message, created_at, paid_emoji, coins_paid, profiles:user_id(id, username, display_name, avatar_url)')
       .eq('stream_id', streamId)
       .order('created_at', { ascending: true })
       .limit(100)
 
-    if (error) {
-      return NextResponse.json({ error: error.message, messages: [] }, { status: 500 })
+    if (primaryQuery.error) {
+      console.warn('Live chat primary query failed, attempting schema fallback:', primaryQuery.error.message)
+      const fallbackQuery = await supabaseService
+        .from('live_chat_messages')
+        .select('id, stream_id, user_id, message, created_at, profiles:user_id(id, username, display_name, avatar_url)')
+        .eq('stream_id', streamId)
+        .order('created_at', { ascending: true })
+        .limit(100)
+
+      if (fallbackQuery.error) {
+        return NextResponse.json({ error: fallbackQuery.error.message, messages: [] }, { status: 500 })
+      }
+      messages = fallbackQuery.data || []
+    } else {
+      messages = primaryQuery.data || []
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const formattedMessages = (messages || []).map((m: any) => ({
+    const formattedMessages = messages.map((m: any) => ({
       ...m,
       paidEmoji: m.paid_emoji || null,
       coinsPaid: m.coins_paid || null,
@@ -287,7 +303,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Insert chat message into database
-    const { data: newMsg, error: insertError } = await supabaseService
+    let insertResult = await supabaseService
       .from('live_chat_messages')
       .insert({
         stream_id: streamId,
@@ -298,6 +314,26 @@ export async function POST(request: NextRequest) {
       })
       .select('id, stream_id, user_id, message, created_at, paid_emoji, coins_paid, profiles:user_id(id, username, display_name, avatar_url)')
       .single()
+
+    if (
+      insertResult.error &&
+      (insertResult.error.message?.includes('paid_emoji') ||
+        insertResult.error.message?.includes('coins_paid') ||
+        insertResult.error.message?.includes('does not exist'))
+    ) {
+      console.warn('Live chat primary insert failed, attempting schema fallback:', insertResult.error.message)
+      insertResult = await supabaseService
+        .from('live_chat_messages')
+        .insert({
+          stream_id: streamId,
+          user_id: user.id,
+          message: cleanMessage,
+        })
+        .select('id, stream_id, user_id, message, created_at, profiles:user_id(id, username, display_name, avatar_url)')
+        .single()
+    }
+
+    const { data: newMsg, error: insertError } = insertResult
 
     if (insertError || !newMsg) {
       return NextResponse.json(
