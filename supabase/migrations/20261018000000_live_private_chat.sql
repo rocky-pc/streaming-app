@@ -55,9 +55,14 @@ CREATE POLICY "Recipients can update read status"
     USING (auth.uid() = recipient_id)
     WITH CHECK (auth.uid() = recipient_id);
 
--- 4. Seed default platform economics for private chat
+-- 4. Add private_chat_enabled column to profiles table
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS private_chat_enabled BOOLEAN DEFAULT false;
+
+-- 5. Seed default platform economics for private chat
 INSERT INTO public.platform_settings (key, value, description)
 VALUES
     ('private_chat_cost_per_message', '10', 'Cost in coins per message sent in live stream 1-on-1 private chat'),
-    ('private_chat_streamer_revenue_percent', '80', 'Percentage of private chat message fees credited to the broadcaster')
+    ('private_chat_streamer_revenue_percent', '80', 'Percentage of private chat message fees credited to the broadcaster'),
+    ('private_chat_unlock_cost', '50', 'Cost in coins for a viewer to unlock 1-on-1 private chat feature with broadcaster'),
+    ('unlocked_private_chat_users', '[]', 'List of user IDs with active private chat access')
 ON CONFLICT (key) DO NOTHING;

@@ -82,6 +82,18 @@ export async function GET(request: NextRequest) {
       settingsMap['private_chat_streamer_revenue_percent'] || '80',
       10
     )
+    const privateChatUnlockCost = parseInt(settingsMap['private_chat_unlock_cost'] || '50', 10)
+
+    let unlockedUserIds: string[] = []
+    if (settingsMap['unlocked_private_chat_users']) {
+      try {
+        const parsed = JSON.parse(settingsMap['unlocked_private_chat_users'])
+        if (Array.isArray(parsed)) unlockedUserIds = parsed
+      } catch {
+        // ignore
+      }
+    }
+    const unlockedSet = new Set(unlockedUserIds)
 
     // 2. Fetch stream info
     let hostUserId = user.id
@@ -103,15 +115,20 @@ export async function GET(request: NextRequest) {
 
     const isHost = user.id === hostUserId
 
-    // Fetch caller's profile (coin balance & chat status)
+    // Fetch caller's profile (coin balance & chat status & private_chat_enabled)
     const { data: callerProfile } = await supabaseService
       .from('profiles')
-      .select('id, username, display_name, avatar_url, coin_balance, chat_enabled')
+      .select('id, username, display_name, avatar_url, coin_balance, chat_enabled, private_chat_enabled')
       .eq('id', user.id)
       .single()
 
     const userCoins = callerProfile?.coin_balance ?? 50
     const userChatEnabled = callerProfile?.chat_enabled ?? true
+    const isPrivateChatUnlocked = Boolean(
+      isHost ||
+      callerProfile?.private_chat_enabled ||
+      unlockedSet.has(user.id)
+    )
 
     // Query helper for private messages
     const fetchAllStreamPrivateMessages = async (): Promise<PrivateMessageItem[]> => {
@@ -245,8 +262,10 @@ export async function GET(request: NextRequest) {
         economics: {
           privateChatCost,
           privateChatStreamerPercent,
+          privateChatUnlockCost,
           userCoins,
           userChatEnabled,
+          isPrivateChatUnlocked: true,
         },
       })
     }
@@ -297,8 +316,10 @@ export async function GET(request: NextRequest) {
       economics: {
         privateChatCost,
         privateChatStreamerPercent,
+        privateChatUnlockCost,
         userCoins,
         userChatEnabled,
+        isPrivateChatUnlocked,
       },
     })
   } catch (err: unknown) {
@@ -320,15 +341,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { streamId, message, recipientId: explicitRecipientId } = body || {}
+    const { streamId, message, recipientId: explicitRecipientId, action } = body || {}
 
-    const cleanMessage = (message || '').trim()
-    if (!streamId || !cleanMessage) {
-      return NextResponse.json({ error: 'streamId and message are required' }, { status: 400 })
-    }
-
-    if (cleanMessage.length > 500) {
-      return NextResponse.json({ error: 'Message exceeds maximum length (500 chars)' }, { status: 400 })
+    if (!streamId) {
+      return NextResponse.json({ error: 'streamId is required' }, { status: 400 })
     }
 
     const supabaseService = getServiceRoleClient()
@@ -345,6 +361,18 @@ export async function POST(request: NextRequest) {
       100,
       Math.max(0, parseInt(settingsMap['private_chat_streamer_revenue_percent'] || '80', 10))
     )
+    const privateChatUnlockCost = Math.max(0, parseInt(settingsMap['private_chat_unlock_cost'] || '50', 10))
+
+    let unlockedUserIds: string[] = []
+    if (settingsMap['unlocked_private_chat_users']) {
+      try {
+        const parsed = JSON.parse(settingsMap['unlocked_private_chat_users'])
+        if (Array.isArray(parsed)) unlockedUserIds = parsed
+      } catch {
+        // ignore
+      }
+    }
+    const unlockedSet = new Set(unlockedUserIds)
 
     // 2. Fetch stream info
     let hostUserId = user.id
@@ -362,21 +390,10 @@ export async function POST(request: NextRequest) {
 
     const isHost = user.id === hostUserId
 
-    // Determine recipient
-    let targetRecipientId = explicitRecipientId
-    if (!isHost) {
-      // Viewers always message the stream host
-      targetRecipientId = hostUserId
-    }
-
-    if (!targetRecipientId) {
-      return NextResponse.json({ error: 'Recipient is required' }, { status: 400 })
-    }
-
     // Sender profile
     const { data: senderProfile } = await supabaseService
       .from('profiles')
-      .select('id, username, display_name, avatar_url, coin_balance, chat_enabled')
+      .select('id, username, display_name, avatar_url, coin_balance, chat_enabled, private_chat_enabled')
       .eq('id', user.id)
       .single()
 
@@ -388,6 +405,148 @@ export async function POST(request: NextRequest) {
     }
 
     const currentCoins = senderProfile?.coin_balance ?? 50
+    const isAlreadyUnlocked = Boolean(
+      isHost ||
+      senderProfile?.private_chat_enabled ||
+      unlockedSet.has(user.id)
+    )
+
+    // -------------------------------------------------------------
+    // ACTION: UNLOCK PRIVATE CHAT (REQUESTED BY USER)
+    // -------------------------------------------------------------
+    if (action === 'unlock') {
+      if (isHost || isAlreadyUnlocked) {
+        return NextResponse.json({
+          success: true,
+          message: 'Private chat is already unlocked for your account',
+          isPrivateChatUnlocked: true,
+          userCoins: currentCoins,
+        })
+      }
+
+      if (currentCoins < privateChatUnlockCost) {
+        return NextResponse.json(
+          {
+            error: `Insufficient coins. Unlocking private chat requires ${privateChatUnlockCost} coins (Your balance: ${currentCoins} coins).`,
+            requiredCoins: privateChatUnlockCost,
+            currentCoins,
+          },
+          { status: 402 }
+        )
+      }
+
+      const newBalance = currentCoins - privateChatUnlockCost
+
+      // Update user's coin balance and private_chat_enabled
+      try {
+        await supabaseService
+          .from('profiles')
+          .update({ coin_balance: newBalance, private_chat_enabled: true })
+          .eq('id', user.id)
+      } catch {
+        await supabaseService
+          .from('profiles')
+          .update({ coin_balance: newBalance })
+          .eq('id', user.id)
+      }
+
+      // Record wallet transaction for viewer
+      await supabaseService.from('wallet_transactions').insert({
+        user_id: user.id,
+        amount: -privateChatUnlockCost,
+        type: 'chat_fee',
+        related_stream_id: streamId,
+        description: `Unlocked 1-on-1 private chat with streamer (${privateChatUnlockCost} coins)`,
+      })
+
+      // Credit streamer revenue share
+      if (hostUserId && hostUserId !== user.id && privateChatUnlockCost > 0) {
+        const streamerEarnings = Math.floor(privateChatUnlockCost * (privateChatStreamerPercent / 100))
+        if (streamerEarnings > 0) {
+          try {
+            const { data: hostProf } = await supabaseService
+              .from('profiles')
+              .select('coin_balance')
+              .eq('id', hostUserId)
+              .single()
+
+            const hostCurrentCoins = hostProf?.coin_balance ?? 0
+            await supabaseService
+              .from('profiles')
+              .update({ coin_balance: hostCurrentCoins + streamerEarnings })
+              .eq('id', hostUserId)
+
+            await supabaseService.from('wallet_transactions').insert({
+              user_id: hostUserId,
+              amount: streamerEarnings,
+              type: 'streamer_earning',
+              related_stream_id: streamId,
+              description: `Private chat unlock revenue (${privateChatStreamerPercent}%) from @${senderProfile?.username || 'viewer'}`,
+            })
+          } catch (err) {
+            console.warn('Error crediting streamer for unlock fee:', err)
+          }
+        }
+      }
+
+      // Add to platform_settings unlocked_private_chat_users
+      try {
+        if (!unlockedUserIds.includes(user.id)) {
+          unlockedUserIds.push(user.id)
+          await supabaseService.from('platform_settings').upsert({
+            key: 'unlocked_private_chat_users',
+            value: JSON.stringify(unlockedUserIds),
+            description: 'List of user IDs with active private chat access',
+            updated_at: new Date().toISOString(),
+          })
+        }
+      } catch (syncErr) {
+        console.warn('Error saving unlocked user in platform_settings:', syncErr)
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Private chat unlocked successfully! You can now send 1-on-1 messages to the broadcaster.',
+        isPrivateChatUnlocked: true,
+        userCoins: newBalance,
+      })
+    }
+
+    // -------------------------------------------------------------
+    // ACTION: SEND 1-ON-1 MESSAGE
+    // -------------------------------------------------------------
+    const cleanMessage = (message || '').trim()
+    if (!cleanMessage) {
+      return NextResponse.json({ error: 'message is required' }, { status: 400 })
+    }
+
+    if (cleanMessage.length > 500) {
+      return NextResponse.json({ error: 'Message exceeds maximum length (500 chars)' }, { status: 400 })
+    }
+
+    // Check if normal viewer has unlocked private chat
+    if (!isHost && !isAlreadyUnlocked) {
+      return NextResponse.json(
+        {
+          error: `Private chat is locked. Please unlock private chat for ${privateChatUnlockCost} coins to message the host.`,
+          locked: true,
+          unlockCost: privateChatUnlockCost,
+        },
+        { status: 403 }
+      )
+    }
+
+    // Determine recipient
+    let targetRecipientId = explicitRecipientId
+    if (!isHost) {
+      // Viewers always message the stream host
+      targetRecipientId = hostUserId
+    }
+
+    if (!targetRecipientId) {
+      return NextResponse.json({ error: 'Recipient is required' }, { status: 400 })
+    }
+
     let remainingCoins = currentCoins
     const finalCost = isHost ? 0 : privateChatCost
 

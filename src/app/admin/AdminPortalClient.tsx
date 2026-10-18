@@ -77,6 +77,7 @@ interface AdminUser {
   bio: string | null
   coin_balance: number
   chat_enabled: boolean
+  private_chat_enabled?: boolean
   created_at: string
   updated_at: string
   videoCount?: number
@@ -105,6 +106,7 @@ interface PlatformEconomics {
   streamer_revenue_percent: number
   private_chat_cost_per_message?: number
   private_chat_streamer_revenue_percent?: number
+  private_chat_unlock_cost?: number
   paid_chat_emojis?: PaidEmojiItem[]
 }
 
@@ -227,6 +229,7 @@ export default function AdminPortalClient() {
     streamer_revenue_percent: 70,
     private_chat_cost_per_message: 10,
     private_chat_streamer_revenue_percent: 80,
+    private_chat_unlock_cost: 50,
     paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
 
@@ -289,6 +292,10 @@ export default function AdminPortalClient() {
   const [coinReason, setCoinReason] = useState<string>('')
   const [isSubmittingCoins, setIsSubmittingCoins] = useState(false)
 
+  // User Deletion Modal State
+  const [deletingUser, setDeletingUser] = useState<AdminUser | null>(null)
+  const [isDeletingUser, setIsDeletingUser] = useState(false)
+
   // Economics Edit State
   const [settingsForm, setSettingsForm] = useState<PlatformEconomics>({
     signup_coin_bonus: 50,
@@ -296,6 +303,7 @@ export default function AdminPortalClient() {
     streamer_revenue_percent: 70,
     private_chat_cost_per_message: 10,
     private_chat_streamer_revenue_percent: 80,
+    private_chat_unlock_cost: 50,
     paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
   const [isSavingSettings, setIsSavingSettings] = useState(false)
@@ -399,6 +407,7 @@ export default function AdminPortalClient() {
             streamer_revenue_percent: settingsData.settings.streamer_revenue_percent ?? 70,
             private_chat_cost_per_message: settingsData.settings.private_chat_cost_per_message ?? 10,
             private_chat_streamer_revenue_percent: settingsData.settings.private_chat_streamer_revenue_percent ?? 80,
+            private_chat_unlock_cost: settingsData.settings.private_chat_unlock_cost ?? 50,
             paid_chat_emojis:
               Array.isArray(settingsData.settings.paid_chat_emojis) &&
               settingsData.settings.paid_chat_emojis.length > 0
@@ -519,6 +528,65 @@ export default function AdminPortalClient() {
       }
     } catch {
       setActionNotice({ type: 'error', message: 'Failed to communicate with server' })
+    }
+  }
+
+  // -------------------------------------------------------------
+  // USER LIST: PRIVATE CHAT UNLOCK / LOCK SWITCH (REQUESTED BY USER)
+  // -------------------------------------------------------------
+  const handleToggleUserPrivateChat = async (user: AdminUser) => {
+    const currentStatus = Boolean(user.private_chat_enabled)
+    const nextStatus = !currentStatus
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, private_chat_enabled: nextStatus }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === user.id ? { ...u, private_chat_enabled: nextStatus } : u))
+        )
+        setActionNotice({
+          type: 'success',
+          message: `Private chat ${nextStatus ? 'UNLOCKED / ENABLED' : 'LOCKED / REVOKED'} for @${user.username}`,
+        })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to toggle private chat permission' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Network error updating private chat' })
+    }
+  }
+
+  // -------------------------------------------------------------
+  // USER LIST: PERMANENT USER DELETION HANDLER (REQUESTED BY USER)
+  // -------------------------------------------------------------
+  const handleDeleteUser = async (user: AdminUser) => {
+    setIsDeletingUser(true)
+    try {
+      const res = await fetch(`/api/admin/users?userId=${user.id}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setUsers((prev) => prev.filter((u) => u.id !== user.id))
+        setDeletingUser(null)
+        setActionNotice({
+          type: 'success',
+          message: data.message || `User @${user.username} deleted successfully`,
+        })
+        if (stats) {
+          setStats({ ...stats, totalProfiles: Math.max(0, stats.totalProfiles - 1) })
+        }
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to delete user' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to delete user' })
+    } finally {
+      setIsDeletingUser(false)
     }
   }
 
@@ -1579,9 +1647,10 @@ export default function AdminPortalClient() {
                         <th className="py-3 px-4">Joined</th>
                         <th className="py-3 px-4">Activity</th>
                         <th className="py-3 px-4 text-center">Live Chat Access</th>
+                        <th className="py-3 px-4 text-center">Private Chat Access</th>
                         <th className="py-3 px-4">Wallet Balance</th>
                         <th className="py-3 px-4">Streamer Revenue</th>
-                        <th className="py-3 px-4 text-right">Wallet Actions</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#272727]">
@@ -1651,6 +1720,36 @@ export default function AdminPortalClient() {
                             </button>
                           </td>
 
+                          {/* PRIVATE CHAT ON/OFF SWITCH (REQUESTED BY USER) */}
+                          <td className="py-3 px-4 whitespace-nowrap text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleUserPrivateChat(u)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm ${
+                                u.private_chat_enabled
+                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30'
+                                  : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700'
+                              }`}
+                              title={
+                                u.private_chat_enabled
+                                  ? 'Private chat is UNLOCKED for this user. Click to lock/turn off.'
+                                  : 'Private chat is LOCKED for this user. Click to manually unlock.'
+                              }
+                            >
+                              {u.private_chat_enabled ? (
+                                <>
+                                  <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                                  <span>Unlocked (ON)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="w-2 h-2 rounded-full bg-zinc-500" />
+                                  <span>Locked (OFF)</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+
                           {/* WALLET COIN BALANCE */}
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 font-bold text-xs">
@@ -1667,7 +1766,7 @@ export default function AdminPortalClient() {
                             </div>
                           </td>
 
-                          {/* WALLET MANAGEMENT BUTTONS */}
+                          {/* ACTIONS */}
                           <td className="py-3 px-4 whitespace-nowrap text-right space-x-2">
                             <button
                               onClick={() => {
@@ -1679,7 +1778,16 @@ export default function AdminPortalClient() {
                               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl transition-colors"
                             >
                               <Coins className="h-3.5 w-3.5" />
-                              <span>Manage Coins</span>
+                              <span>Coins</span>
+                            </button>
+
+                            <button
+                              onClick={() => setDeletingUser(u)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/20 rounded-xl transition-colors"
+                              title="Permanently delete this user"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Delete</span>
                             </button>
                           </td>
                         </tr>
@@ -2389,6 +2497,37 @@ export default function AdminPortalClient() {
                         className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pr-8 focus:outline-none focus:border-pink-400"
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Private Chat Unlock Fee (Coins) */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                      Private Chat Unlock Fee
+                    </span>
+                    <span className="text-base">🔓</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Fee in coins for viewers to unlock 1-on-1 private chat with the streamer until turned off by admin.
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Unlock Cost (Coins)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        value={settingsForm.private_chat_unlock_cost ?? 50}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            private_chat_unlock_cost: Math.max(0, parseInt(e.target.value, 10) || 0),
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pl-8 focus:outline-none focus:border-amber-400"
+                      />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
                     </div>
                   </div>
                 </div>
@@ -3510,6 +3649,65 @@ export default function AdminPortalClient() {
                   </>
                 ) : (
                   <span>Execute Action</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Deletion Confirmation Modal (Requested by user) */}
+      {deletingUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#181818] border border-red-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-up">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-red-600/20 text-red-500 shrink-0">
+                <Trash2 className="h-6 w-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-white">Delete User Account</h4>
+                <p className="text-xs text-zinc-400">Irreversible user and data purge</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-[#121212] border border-[#272727] rounded-xl text-xs text-zinc-300 space-y-2">
+              <p>
+                Are you sure you want to permanently delete user{' '}
+                <strong className="text-white">@{deletingUser.username}</strong>{' '}
+                ({deletingUser.display_name || 'No display name'})?
+              </p>
+              <p className="text-red-400 text-[11px] leading-relaxed">
+                ⚠️ Warning: This will permanently delete the user profile, coin wallet (
+                {deletingUser.coin_balance || 0} coins), all videos, live streams, chat messages,
+                and authentication account. This action cannot be reversed!
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setDeletingUser(null)}
+                className="px-4 py-2 text-xs font-semibold text-zinc-300 hover:text-white bg-[#222] hover:bg-[#282828] rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => handleDeleteUser(deletingUser)}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeletingUser ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Deleting User...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Confirm Delete User</span>
+                  </>
                 )}
               </button>
             </div>

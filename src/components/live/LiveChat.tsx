@@ -140,6 +140,14 @@ export function LiveChat({
     avatar_url: string | null
   } | null>(null)
 
+  // Server confirmed Host detection (ensures host is immediately recognized on mobile view)
+  const [serverIsHost, setServerIsHost] = useState<boolean>(false)
+
+  // Private Chat Unlock state (viewer pays fee declared by admin to unlock until admin turns off switch)
+  const [isPrivateChatUnlocked, setIsPrivateChatUnlocked] = useState<boolean>(false)
+  const [privateChatUnlockCost, setPrivateChatUnlockCost] = useState<number>(50)
+  const [isUnlocking, setIsUnlocking] = useState<boolean>(false)
+
   // Top Up Modal State
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false)
 
@@ -148,8 +156,16 @@ export function LiveChat({
   const privateScrollContainerRef = useRef<HTMLDivElement>(null)
 
   const isHost = Boolean(
-    isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
+    serverIsHost || isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
   )
+
+  useEffect(() => {
+    // If profile indicates private_chat_enabled, mark unlocked
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (profile && (profile as any).private_chat_enabled) {
+      setIsPrivateChatUnlocked(true)
+    }
+  }, [profile])
 
   const currentBalance = userCoins ?? profile?.coin_balance ?? 50
   const isBalanceInsufficient = !isHost && chatCost > 0 && currentBalance < chatCost
@@ -245,44 +261,57 @@ export function LiveChat({
     if (!user) return
 
     try {
-      if (isHost) {
-        // If host has selected a specific viewer, fetch 1-on-1 messages with that viewer
-        if (selectedViewer) {
-          const res = await fetch(
-            `/api/live/chat/private?streamId=${streamId}&withUserId=${selectedViewer.id}`
-          )
-          if (res.ok) {
-            const data = await res.json()
-            if (Array.isArray(data.messages)) {
-              setPrivateMessages(data.messages)
-            }
-          }
+      // Determine endpoint based on whether host is viewing a specific viewer
+      const targetUrl =
+        isHost && selectedViewer
+          ? `/api/live/chat/private?streamId=${streamId}&withUserId=${selectedViewer.id}`
+          : `/api/live/chat/private?streamId=${streamId}`
+
+      const res = await fetch(targetUrl)
+      if (res.ok) {
+        const data = await res.json()
+
+        // Sync host status confirmed by server (crucial for mobile view)
+        if (data.isHost) {
+          setServerIsHost(true)
+          setIsPrivateChatUnlocked(true)
         }
 
-        // Always also fetch conversation summaries to keep unread count and latest messages updated
+        if (Array.isArray(data.conversations)) {
+          setConversations(data.conversations)
+        }
+        if (Array.isArray(data.messages)) {
+          setPrivateMessages(data.messages)
+        }
+        if (data.otherUser) {
+          setHostProfile(data.otherUser)
+        }
+        if (data.economics) {
+          if (typeof data.economics.isPrivateChatUnlocked === 'boolean') {
+            setIsPrivateChatUnlocked(data.economics.isPrivateChatUnlocked)
+          }
+          if (typeof data.economics.privateChatUnlockCost === 'number') {
+            setPrivateChatUnlockCost(data.economics.privateChatUnlockCost)
+          }
+          if (typeof data.economics.privateChatCost === 'number') {
+            setPrivateChatCost(data.economics.privateChatCost)
+          }
+          if (typeof data.economics.privateChatStreamerPercent === 'number') {
+            setPrivateChatStreamerPercent(data.economics.privateChatStreamerPercent)
+          }
+          if (data.economics.userCoins !== null && data.economics.userCoins !== undefined) {
+            setUserCoins(data.economics.userCoins)
+          }
+        }
+      }
+
+      // If host is viewing a specific viewer, also sync conversations list for badges
+      if (isHost && selectedViewer) {
         const convRes = await fetch(`/api/live/chat/private?streamId=${streamId}`)
         if (convRes.ok) {
           const convData = await convRes.json()
           if (Array.isArray(convData.conversations)) {
             setConversations(convData.conversations)
-          }
-        }
-      } else {
-        // Normal viewer: fetch 1-on-1 messages with host
-        const res = await fetch(`/api/live/chat/private?streamId=${streamId}`)
-        if (res.ok) {
-          const data = await res.json()
-          if (Array.isArray(data.messages)) {
-            setPrivateMessages(data.messages)
-          }
-          if (data.otherUser) {
-            setHostProfile(data.otherUser)
-          }
-          if (typeof data.economics?.privateChatCost === 'number') {
-            setPrivateChatCost(data.economics.privateChatCost)
-          }
-          if (data.economics?.userCoins !== null && data.economics?.userCoins !== undefined) {
-            setUserCoins(data.economics.userCoins)
           }
         }
       }
@@ -523,6 +552,9 @@ export function LiveChat({
         if (res.status === 402) {
           setPrivateChatError(data.error || 'Insufficient coins')
           setIsTopUpModalOpen(true)
+        } else if (res.status === 403 && data.locked) {
+          setIsPrivateChatUnlocked(false)
+          setPrivateChatError(data.error || 'Private chat is locked. Please unlock private chat to message.')
         } else {
           setPrivateChatError(data.error || 'Failed to send private message')
         }
@@ -543,6 +575,47 @@ export function LiveChat({
       setPrivateChatError(errorMsg)
     } finally {
       setIsSendingPrivate(false)
+    }
+  }
+
+  // -------------------------------------------------------------
+  // UNLOCK PRIVATE CHAT HANDLER (REQUESTED BY USER)
+  // -------------------------------------------------------------
+  const handleUnlockPrivateChat = async () => {
+    if (!user) return
+    if (currentBalance < privateChatUnlockCost) {
+      setIsTopUpModalOpen(true)
+      return
+    }
+    setIsUnlocking(true)
+    setPrivateChatError(null)
+    try {
+      const res = await fetch('/api/live/chat/private', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          streamId,
+          action: 'unlock',
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setIsPrivateChatUnlocked(true)
+        if (typeof data.userCoins === 'number') {
+          setUserCoins(data.userCoins)
+        }
+        refreshProfile?.()
+        fetchPrivateChat()
+      } else {
+        setPrivateChatError(data.error || 'Failed to unlock private chat')
+        if (res.status === 402) {
+          setIsTopUpModalOpen(true)
+        }
+      }
+    } catch {
+      setPrivateChatError('Network error unlocking private chat')
+    } finally {
+      setIsUnlocking(false)
     }
   }
 
@@ -571,23 +644,23 @@ export function LiveChat({
     <div
       className={`flex flex-col bg-[#0f0f0f] border border-[#272727] rounded-2xl overflow-hidden shadow-2xl relative select-none ${className}`}
     >
-      {/* Top Header with Tab Switcher */}
-      <div className="px-3 py-2.5 bg-[#181818] border-b border-[#272727] flex items-center justify-between shrink-0 gap-2">
+      {/* Top Header with Tab Switcher (Mobile Responsive) */}
+      <div className="px-2.5 sm:px-3 py-2 sm:py-2.5 bg-[#181818] border-b border-[#272727] flex items-center justify-between shrink-0 gap-1.5 sm:gap-2">
         {/* Tab Switcher Pills */}
-        <div className="flex items-center gap-1 bg-[#121212] p-1 rounded-xl border border-[#262626]">
+        <div className="flex items-center gap-1 bg-[#121212] p-0.5 sm:p-1 rounded-xl border border-[#262626] shrink min-w-0">
           {/* Public Live Chat Tab */}
           <button
             type="button"
             onClick={() => setActiveChatTab('public')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+            className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 rounded-lg text-xs font-bold transition-all shrink-0 ${
               activeChatTab === 'public'
                 ? 'bg-[#272727] text-white shadow-sm'
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <MessageSquare className="h-3.5 w-3.5 text-red-500" />
+            <MessageSquare className="h-3.5 w-3.5 text-red-500 shrink-0" />
             <span>Live Chat</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5 shrink-0" />
           </button>
 
           {/* Private Chat Tab (Paid Option for Viewers / WhatsApp Inbox for Streamer) */}
@@ -597,13 +670,13 @@ export function LiveChat({
               setActiveChatTab('private')
               fetchPrivateChat()
             }}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all relative ${
+            className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 rounded-lg text-xs font-bold transition-all relative shrink-0 ${
               activeChatTab === 'private'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <Lock className="h-3.5 w-3.5 text-purple-300" />
+            <Lock className="h-3.5 w-3.5 text-purple-300 shrink-0" />
             <span>{isHost ? 'Private Chats' : 'Private Chat'}</span>
 
             {/* Unread badge for streamer */}
@@ -615,28 +688,28 @@ export function LiveChat({
 
             {/* Price indicator for normal viewers */}
             {!isHost && (
-              <span className="text-[10px] bg-purple-950/70 border border-purple-400/40 text-purple-200 px-1.5 py-0.2 rounded-full font-mono">
-                🪙 {privateChatCost}
+              <span className="text-[10px] bg-purple-950/70 border border-purple-400/40 text-purple-200 px-1.5 py-0.2 rounded-full font-mono hidden xs:inline-block">
+                🪙 {isPrivateChatUnlocked ? privateChatCost : privateChatUnlockCost}
               </span>
             )}
           </button>
         </div>
 
         {/* Status Badge / Close Button */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           {isHost ? (
             <div
-              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold shrink-0"
               title="You are the host of this stream. All chats are completely free for you!"
             >
-              <Crown className="h-3 w-3 text-amber-400" />
-              <span>Host (Free Chat)</span>
+              <Crown className="h-3 w-3 text-amber-400 shrink-0" />
+              <span>Host<span className="hidden sm:inline"> (Free Chat)</span></span>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => setIsTopUpModalOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold transition-colors cursor-pointer shrink-0"
               title="Click to top up coins"
             >
               <span>🪙</span>
@@ -1174,9 +1247,117 @@ export function LiveChat({
             /* --------------------------------------------------------------- */
             /* VIEWER EXPERIENCE: 1-on-1 Paid Private Chat with Host          */
             /* --------------------------------------------------------------- */
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* Host Profile Banner & Cost */}
-              <div className="p-3 bg-gradient-to-r from-purple-950/40 to-zinc-900 border-b border-[#282828] flex items-center justify-between shrink-0">
+            !isPrivateChatUnlocked ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-purple-600 via-pink-600 to-amber-500 flex items-center justify-center text-white shadow-xl shadow-purple-600/30">
+                    <Lock className="h-8 w-8 text-white" />
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-amber-500 border-2 border-[#0c0c0c] flex items-center justify-center text-black text-xs font-black shadow">
+                    🪙
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 max-w-xs">
+                  <h3 className="text-base font-extrabold text-white">Unlock 1-on-1 Private Chat</h3>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Chat directly with{' '}
+                    <strong className="text-white">@{hostProfile?.username || 'streamer'}</strong>. Once
+                    unlocked, your private chat stays active until turned off by an admin!
+                  </p>
+                </div>
+
+                {/* Price and Details Card */}
+                <div className="w-full max-w-xs p-3.5 rounded-2xl bg-[#141414] border border-[#272727] space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Unlock Fee:</span>
+                    <span className="font-extrabold text-amber-400 text-sm flex items-center gap-1">
+                      <span>🪙</span>
+                      <span>{privateChatUnlockCost} Coins</span>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-[#222] pt-2">
+                    <span className="text-zinc-400">Your Coin Balance:</span>
+                    <span
+                      className={`font-bold flex items-center gap-1 ${
+                        currentBalance < privateChatUnlockCost ? 'text-rose-400' : 'text-emerald-400'
+                      }`}
+                    >
+                      <span>🪙</span>
+                      <span>{currentBalance} Coins</span>
+                    </span>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-500 pt-0.5">
+                    Broadcaster receives {privateChatStreamerPercent}% of the unlock fee
+                  </div>
+                </div>
+
+                {/* Error Notice */}
+                {privateChatError && (
+                  <div className="w-full max-w-xs p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center justify-between gap-2">
+                    <span>{privateChatError}</span>
+                    <button
+                      onClick={() => setPrivateChatError(null)}
+                      className="text-red-400 hover:text-white"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Action Button */}
+                {user ? (
+                  currentBalance < privateChatUnlockCost ? (
+                    <div className="w-full max-w-xs space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsTopUpModalOpen(true)}
+                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-extrabold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Coins className="h-4 w-4" />
+                        <span>Top Up Coins ({currentBalance}/{privateChatUnlockCost})</span>
+                      </button>
+                      <p className="text-[10px] text-zinc-500">
+                        You need {privateChatUnlockCost - currentBalance} more coins to unlock
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="w-full max-w-xs space-y-2">
+                      <button
+                        type="button"
+                        disabled={isUnlocking}
+                        onClick={handleUnlockPrivateChat}
+                        className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-purple-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        {isUnlocking ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Unlocking Private Chat...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4 text-amber-300" />
+                            <span>Unlock Now • 🪙 {privateChatUnlockCost} Coins</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <Link
+                    href={`/login?redirect=/live/${streamId}`}
+                    className="w-full max-w-xs py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center"
+                  >
+                    Sign In to Unlock Private Chat
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* Host Profile Banner & Cost */}
+                <div className="p-3 bg-gradient-to-r from-purple-950/40 to-zinc-900 border-b border-[#282828] flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 border border-purple-500/40 shrink-0">
                     {hostProfile?.avatar_url ? (
@@ -1356,9 +1537,10 @@ export function LiveChat({
                 )}
               </div>
             </div>
-          )}
-        </div>
-      )}
+          )
+        )}
+      </div>
+    )}
 
       {/* Coin Top-Up Modal Integration */}
       <TopUpModal

@@ -70,6 +70,7 @@ export async function GET(request: Request) {
         streamer_revenue_percent: parseInt(settingsMap['streamer_revenue_percent'] || '70', 10),
         private_chat_cost_per_message: parseInt(settingsMap['private_chat_cost_per_message'] || '10', 10),
         private_chat_streamer_revenue_percent: parseInt(settingsMap['private_chat_streamer_revenue_percent'] || '80', 10),
+        private_chat_unlock_cost: parseInt(settingsMap['private_chat_unlock_cost'] || '50', 10),
         paid_chat_emojis: paidEmojis,
         topup_packages: packages,
       },
@@ -95,6 +96,7 @@ export async function POST(request: Request) {
       streamer_revenue_percent,
       private_chat_cost_per_message,
       private_chat_streamer_revenue_percent,
+      private_chat_unlock_cost,
       paid_chat_emojis,
       topup_packages,
     } = body || {}
@@ -107,6 +109,15 @@ export async function POST(request: Request) {
         key: 'signup_coin_bonus',
         value: String(Math.max(0, parseInt(signup_coin_bonus, 10) || 0)),
         description: 'Initial coin bonus awarded to newly registered users',
+        updated_at: new Date().toISOString(),
+      })
+    }
+
+    if (private_chat_unlock_cost !== undefined) {
+      upserts.push({
+        key: 'private_chat_unlock_cost',
+        value: String(Math.max(0, parseInt(private_chat_unlock_cost, 10) || 0)),
+        description: 'Cost in coins for a viewer to unlock 1-on-1 private chat feature with broadcaster',
         updated_at: new Date().toISOString(),
       })
     }

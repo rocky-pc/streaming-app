@@ -18,7 +18,13 @@ export function getSupabaseBrowserClient() {
   return browserClient
 }
 
-export const supabase = getSupabaseBrowserClient()
+export const supabase = new Proxy({} as ReturnType<typeof createBrowserClientInstance>, {
+  get(_target, prop) {
+    const client = getSupabaseBrowserClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (client as any)[prop]
+  },
+})
 
 export async function createSignedUploadUrl(bucket: string, path: string, expiresIn = 3600) {
   const client = getSupabaseBrowserClient()
