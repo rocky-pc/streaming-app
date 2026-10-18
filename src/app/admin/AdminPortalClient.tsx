@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Shield,
+  ShieldCheck,
   Radio,
   Video,
   MessageSquare,
@@ -215,6 +216,7 @@ export interface AdminWithdrawalRequest {
   upi_id: string
   upi_name?: string | null
   status: 'pending' | 'approved' | 'rejected'
+  withdrawal_source?: 'earned_only' | 'deposited_only' | 'both'
   admin_notes: string | null
   created_at: string
   updated_at?: string
@@ -231,6 +233,7 @@ export interface AdminWithdrawalSettings {
   streamer_payout_rate_coins: number
   streamer_payout_rate_inr: number
   min_withdrawal_inr: number
+  withdrawal_allowed_source?: 'earned_only' | 'deposited_only' | 'both'
   instructions?: string
 }
 
@@ -298,11 +301,13 @@ export default function AdminPortalClient() {
     streamer_payout_rate_coins: 100,
     streamer_payout_rate_inr: 20,
     min_withdrawal_inr: 100,
+    withdrawal_allowed_source: 'both',
   })
   const [withdrawalForm, setWithdrawalForm] = useState<AdminWithdrawalSettings>({
     streamer_payout_rate_coins: 100,
     streamer_payout_rate_inr: 20,
     min_withdrawal_inr: 100,
+    withdrawal_allowed_source: 'both',
   })
   const [isSavingWithdrawalSettings, setIsSavingWithdrawalSettings] = useState(false)
   const [withdrawalFilter, setWithdrawalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
@@ -914,16 +919,23 @@ export default function AdminPortalClient() {
           streamer_payout_rate_coins: Number(withdrawalForm.streamer_payout_rate_coins),
           streamer_payout_rate_inr: Number(withdrawalForm.streamer_payout_rate_inr),
           min_withdrawal_inr: Number(withdrawalForm.min_withdrawal_inr),
+          withdrawal_allowed_source: withdrawalForm.withdrawal_allowed_source || 'both',
         }),
       })
       const data = await res.json()
       if (res.ok) {
         setWithdrawalSettings(withdrawalForm)
+        const sourceLabel =
+          withdrawalForm.withdrawal_allowed_source === 'earned_only'
+            ? 'Earned Coins Only'
+            : withdrawalForm.withdrawal_allowed_source === 'deposited_only'
+            ? 'Deposited Coins Only'
+            : 'Both / All Coins'
         setActionNotice({
           type: 'success',
           message:
             data.message ||
-            `Payout rate saved! ${withdrawalForm.streamer_payout_rate_coins} Coins = ₹${withdrawalForm.streamer_payout_rate_inr} INR (Min: ₹${withdrawalForm.min_withdrawal_inr})`,
+            `Payout settings saved! Policy: ${sourceLabel} | ${withdrawalForm.streamer_payout_rate_coins} Coins = ₹${withdrawalForm.streamer_payout_rate_inr} INR (Min: ₹${withdrawalForm.min_withdrawal_inr})`,
         })
       } else {
         setActionNotice({ type: 'error', message: data.error || 'Failed to save payout settings' })
@@ -3665,6 +3677,15 @@ export default function AdminPortalClient() {
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-2">
                   Min withdrawal: <strong className="text-white">₹{withdrawalSettings.min_withdrawal_inr}</strong>
+                  <br />
+                  Allowed Source:{' '}
+                  <strong className="text-emerald-400">
+                    {withdrawalSettings.withdrawal_allowed_source === 'earned_only'
+                      ? '🪙 Earned Coins Only'
+                      : withdrawalSettings.withdrawal_allowed_source === 'deposited_only'
+                      ? '💳 Deposited Coins Only'
+                      : '⚡ Both / All Coins'}
+                  </strong>
                 </p>
               </div>
             </div>
@@ -3681,7 +3702,7 @@ export default function AdminPortalClient() {
                     <span>Streamer Earnings Payout Configuration</span>
                   </h3>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    Configure the coin to INR exchange rate (e.g. 100 Coins = 20 INR) and minimum withdrawal amount required for cash-out requests.
+                    Configure the coin to INR exchange rate (e.g. 100 Coins = 20 INR), minimum withdrawal limit, and allowed withdrawal source (Earned, Deposited, or Both).
                   </p>
                 </div>
 
@@ -3768,6 +3789,129 @@ export default function AdminPortalClient() {
                     placeholder="100"
                   />
                   <p className="text-[10px] text-zinc-500">e.g. ₹100 minimum threshold</p>
+                </div>
+              </div>
+
+              {/* Allowed Withdrawal Coin Source Policy Selector */}
+              <div className="space-y-2 pt-3 border-t border-[#272727]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Allowed Withdrawal Coin Source (Policy)</span>
+                  </label>
+                  <span className="text-[11px] text-zinc-400">
+                    Choose which coin balance users/streamers are authorized to cash out
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Option 1: Earned Coins Only */}
+                  <div
+                    onClick={() =>
+                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'earned_only' }))
+                    }
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                      (withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only'
+                        ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/40 text-white'
+                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">🪙</span>
+                        <div>
+                          <div className="text-xs font-bold text-white">Earned Coins Only</div>
+                          <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">Streamer Earnings Only</div>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          (withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only'
+                            ? 'border-emerald-500 bg-emerald-500'
+                            : 'border-zinc-600'
+                        }`}
+                      >
+                        {(withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only' && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
+                      Only coins earned via stream chat tips, stickers, gifts, and private messages can be cashed out. Top-up deposits are locked to spending.
+                    </p>
+                  </div>
+
+                  {/* Option 2: Deposited Coins Only */}
+                  <div
+                    onClick={() =>
+                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'deposited_only' }))
+                    }
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                      withdrawalForm.withdrawal_allowed_source === 'deposited_only'
+                        ? 'bg-blue-500/10 border-blue-500 ring-1 ring-blue-500/40 text-white'
+                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">💳</span>
+                        <div>
+                          <div className="text-xs font-bold text-white">Deposited Coins Only</div>
+                          <div className="text-[10px] text-blue-400 font-semibold mt-0.5">Deposit Refund Mode</div>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          withdrawalForm.withdrawal_allowed_source === 'deposited_only'
+                            ? 'border-blue-500 bg-blue-500'
+                            : 'border-zinc-600'
+                        }`}
+                      >
+                        {withdrawalForm.withdrawal_allowed_source === 'deposited_only' && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
+                      Users can only withdraw / refund coins purchased through UPI top-up packages. Streamer chat and tip earnings are excluded.
+                    </p>
+                  </div>
+
+                  {/* Option 3: Both / All Coins */}
+                  <div
+                    onClick={() =>
+                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'both' }))
+                    }
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                      (withdrawalForm.withdrawal_allowed_source || 'both') === 'both'
+                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/40 text-white'
+                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">⚡</span>
+                        <div>
+                          <div className="text-xs font-bold text-white">Both / All Coins</div>
+                          <div className="text-[10px] text-purple-400 font-semibold mt-0.5">Universal Payout Mode</div>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          (withdrawalForm.withdrawal_allowed_source || 'both') === 'both'
+                            ? 'border-purple-500 bg-purple-500'
+                            : 'border-zinc-600'
+                        }`}
+                      >
+                        {(withdrawalForm.withdrawal_allowed_source || 'both') === 'both' && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
+                      Open withdrawal policy. Users and streamers can cash out their entire wallet balance regardless of whether coins were earned or deposited.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -3891,9 +4035,24 @@ export default function AdminPortalClient() {
                             <span className="text-[10px] text-zinc-500">to transfer manually</span>
                           </td>
 
-                          {/* Coins Deducted */}
+                          {/* Coins Deducted & Source Badge */}
                           <td className="py-3.5 px-4 font-mono font-bold text-zinc-300">
-                            🪙 {r.coins}
+                            <div>🪙 {r.coins}</div>
+                            {r.withdrawal_source === 'earned_only' && (
+                              <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                🪙 Earned Coins
+                              </span>
+                            )}
+                            {r.withdrawal_source === 'deposited_only' && (
+                              <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                💳 Deposited Coins
+                              </span>
+                            )}
+                            {(!r.withdrawal_source || r.withdrawal_source === 'both') && (
+                              <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                ⚡ All Balance
+                              </span>
+                            )}
                           </td>
 
                           {/* Streamer UPI ID with 1-click Copy */}
@@ -4051,6 +4210,16 @@ export default function AdminPortalClient() {
                 <span className="text-xs text-zinc-400">Coins Deducted:</span>
                 <span className="text-xs font-mono font-bold text-zinc-300">
                   🪙 {approvingWithdrawal.coins}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                <span className="text-xs text-zinc-400">Coin Source:</span>
+                <span className="text-xs font-semibold text-zinc-200">
+                  {approvingWithdrawal.withdrawal_source === 'earned_only'
+                    ? '🪙 Earned Coins'
+                    : approvingWithdrawal.withdrawal_source === 'deposited_only'
+                    ? '💳 Deposited Coins'
+                    : '⚡ Both / All Balance'}
                 </span>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-white/5">

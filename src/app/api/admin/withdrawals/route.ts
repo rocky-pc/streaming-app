@@ -12,6 +12,7 @@ export interface AdminWithdrawalItem {
   upi_id: string
   upi_name?: string | null
   status: 'pending' | 'approved' | 'rejected'
+  withdrawal_source?: 'earned_only' | 'deposited_only' | 'both'
   admin_notes?: string | null
   created_at: string
   updated_at?: string
@@ -113,6 +114,9 @@ export async function GET(request: Request) {
       })
     }
 
+    const allowedSource =
+      (settingsMap['withdrawal_allowed_source'] as 'earned_only' | 'deposited_only' | 'both') || 'both'
+
     return NextResponse.json({
       success: true,
       requests: filteredRequests,
@@ -121,6 +125,7 @@ export async function GET(request: Request) {
         streamer_payout_rate_coins: rateCoins,
         streamer_payout_rate_inr: rateInr,
         min_withdrawal_inr: minWithdrawalInr,
+        withdrawal_allowed_source: allowedSource,
         instructions,
       },
       stats: {
@@ -152,6 +157,7 @@ export async function POST(request: Request) {
       streamer_payout_rate_coins,
       streamer_payout_rate_inr,
       min_withdrawal_inr,
+      withdrawal_allowed_source,
       instructions,
     } = body || {}
 
@@ -162,6 +168,18 @@ export async function POST(request: Request) {
     // -------------------------------------------------------------------------
     if (action === 'update_settings') {
       const upserts = []
+
+      if (withdrawal_allowed_source !== undefined) {
+        const validSource = ['earned_only', 'deposited_only', 'both'].includes(withdrawal_allowed_source)
+          ? withdrawal_allowed_source
+          : 'both'
+        upserts.push({
+          key: 'withdrawal_allowed_source',
+          value: validSource,
+          description: 'Allowed withdrawal coin source: earned_only, deposited_only, or both',
+          updated_at: new Date().toISOString(),
+        })
+      }
 
       if (streamer_payout_rate_coins !== undefined) {
         upserts.push({

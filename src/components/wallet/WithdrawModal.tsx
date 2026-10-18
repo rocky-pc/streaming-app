@@ -28,6 +28,7 @@ export interface WithdrawalHistoryItem {
   upi_id: string
   upi_name?: string | null
   status: 'pending' | 'approved' | 'rejected'
+  withdrawal_source?: 'earned_only' | 'deposited_only' | 'both'
   admin_notes?: string | null
   created_at: string
   updated_at?: string
@@ -46,6 +47,11 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
   const [loading, setLoading] = useState(true)
   const [coinBalance, setCoinBalance] = useState<number>(profile?.coin_balance ?? 0)
   const [totalEarnedCoins, setTotalEarnedCoins] = useState<number>(0)
+  const [totalDepositedCoins, setTotalDepositedCoins] = useState<number>(0)
+  const [availableEarnedCoins, setAvailableEarnedCoins] = useState<number>(0)
+  const [availableDepositedCoins, setAvailableDepositedCoins] = useState<number>(0)
+  const [withdrawableCoins, setWithdrawableCoins] = useState<number>(profile?.coin_balance ?? 0)
+  const [allowedSource, setAllowedSource] = useState<'earned_only' | 'deposited_only' | 'both'>('both')
   const [requests, setRequests] = useState<WithdrawalHistoryItem[]>([])
 
   // Payout configuration from admin
@@ -82,6 +88,21 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
         }
         if (typeof data.totalEarnedCoins === 'number') {
           setTotalEarnedCoins(data.totalEarnedCoins)
+        }
+        if (typeof data.totalDepositedCoins === 'number') {
+          setTotalDepositedCoins(data.totalDepositedCoins)
+        }
+        if (typeof data.availableEarnedCoins === 'number') {
+          setAvailableEarnedCoins(data.availableEarnedCoins)
+        }
+        if (typeof data.availableDepositedCoins === 'number') {
+          setAvailableDepositedCoins(data.availableDepositedCoins)
+        }
+        if (typeof data.withdrawableCoins === 'number') {
+          setWithdrawableCoins(data.withdrawableCoins)
+        }
+        if (data.allowedSource) {
+          setAllowedSource(data.allowedSource)
         }
         if (data.settings) {
           setRateCoins(data.settings.streamer_payout_rate_coins || 100)
@@ -148,9 +169,9 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
   }
 
   const handleWithdrawAll = () => {
-    if (coinBalance <= 0) return
-    setCoinsInput(String(coinBalance))
-    const calcInr = Math.floor(((coinBalance * rateInr) / rateCoins) * 100) / 100
+    if (withdrawableCoins <= 0) return
+    setCoinsInput(String(withdrawableCoins))
+    const calcInr = Math.floor(((withdrawableCoins * rateInr) / rateCoins) * 100) / 100
     setInrInput(String(calcInr))
   }
 
@@ -174,10 +195,20 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
       return
     }
 
-    if (coinBalance < coinsNum) {
-      setErrorMessage(
-        `Insufficient balance. You need ${coinsNum} coins for ₹${inrNum}, but currently have ${coinBalance} coins.`
-      )
+    if (coinsNum > withdrawableCoins) {
+      if (allowedSource === 'earned_only') {
+        setErrorMessage(
+          `Platform policy allows withdrawing earned coins only. You have ${availableEarnedCoins} available earned coins (Requested: ${coinsNum}).`
+        )
+      } else if (allowedSource === 'deposited_only') {
+        setErrorMessage(
+          `Platform policy allows withdrawing deposited coins only. You have ${availableDepositedCoins} available deposited coins (Requested: ${coinsNum}).`
+        )
+      } else {
+        setErrorMessage(
+          `Insufficient balance. You need ${coinsNum} coins for ₹${inrNum}, but only have ${withdrawableCoins} withdrawable coins.`
+        )
+      }
       return
     }
 
@@ -207,8 +238,15 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
 
       if (typeof data.newBalance === 'number') {
         setCoinBalance(data.newBalance)
+        setWithdrawableCoins((prev) => Math.max(0, prev - coinsNum))
       } else {
         setCoinBalance((prev) => Math.max(0, prev - coinsNum))
+        setWithdrawableCoins((prev) => Math.max(0, prev - coinsNum))
+      }
+      if (allowedSource === 'earned_only') {
+        setAvailableEarnedCoins((prev) => Math.max(0, prev - coinsNum))
+      } else if (allowedSource === 'deposited_only') {
+        setAvailableDepositedCoins((prev) => Math.max(0, prev - coinsNum))
       }
 
       if (data.request) {
@@ -232,7 +270,7 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
   if (!isOpen) return null
 
   const minCoinsNeeded = Math.ceil((minWithdrawalInr * rateCoins) / rateInr)
-  const userCanWithdraw = coinBalance >= minCoinsNeeded
+  const userCanWithdraw = withdrawableCoins >= minCoinsNeeded
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
@@ -294,7 +332,7 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-                  Available Wallet Balance
+                  Total Wallet Balance
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl font-black text-white">🪙 {coinBalance.toLocaleString()}</span>
@@ -314,11 +352,60 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
               </div>
             </div>
 
+            {/* Withdrawable Breakdown Box according to Policy */}
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-zinc-400 flex items-center gap-1.5 font-medium">
+                  <span>Withdrawable Balance:</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    {allowedSource === 'earned_only'
+                      ? 'Earned Only'
+                      : allowedSource === 'deposited_only'
+                      ? 'Deposited Only'
+                      : 'All Balance'}
+                  </span>
+                </span>
+                <span className="font-extrabold text-emerald-400 font-mono text-sm">
+                  🪙 {withdrawableCoins.toLocaleString()}{' '}
+                  <span className="text-xs text-zinc-400 font-normal">
+                    (≈ ₹{((withdrawableCoins * rateInr) / rateCoins).toFixed(2)})
+                  </span>
+                </span>
+              </div>
+
+              {/* Sub-breakdown: Earned vs Deposited */}
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5 text-[11px]">
+                <div className="flex items-center justify-between text-zinc-400">
+                  <span>🪙 Earned Pool:</span>
+                  <span className={`font-mono font-semibold ${allowedSource === 'earned_only' ? 'text-emerald-400' : 'text-zinc-300'}`}>
+                    {availableEarnedCoins.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-zinc-400">
+                  <span>💳 Deposited Pool:</span>
+                  <span className={`font-mono font-semibold ${allowedSource === 'deposited_only' ? 'text-blue-400' : 'text-zinc-300'}`}>
+                    {availableDepositedCoins.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {allowedSource === 'earned_only' && (
+                <p className="text-[10px] text-amber-400/90 pt-0.5">
+                  Notice: Platform policy restricts withdrawals to streamer earnings only. Deposited top-up coins cannot be cashed out.
+                </p>
+              )}
+              {allowedSource === 'deposited_only' && (
+                <p className="text-[10px] text-blue-400/90 pt-0.5">
+                  Notice: Platform policy restricts withdrawals to deposited coins only (deposit refund mode).
+                </p>
+              )}
+            </div>
+
             {/* Admin Payout Rate Badge */}
-            <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-zinc-400">
+            <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px] text-zinc-400">
               <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Conversion Rate: {rateCoins} Coins = ₹{rateInr} INR</span>
+                <span>Conversion: {rateCoins} Coins = ₹{rateInr} INR</span>
               </div>
               <div className="text-zinc-400">
                 Min Payout: <strong className="text-white">₹{minWithdrawalInr}</strong> ({minCoinsNeeded} coins)
@@ -535,6 +622,21 @@ export function WithdrawModal({ isOpen, onClose, onSuccess }: WithdrawModalProps
                         <div className="flex items-center gap-2">
                           <span className="text-base font-black text-white">₹{req.amount_inr}</span>
                           <span className="text-xs text-zinc-400 font-mono">({req.coins} coins)</span>
+                          {req.withdrawal_source === 'earned_only' && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              🪙 Earned
+                            </span>
+                          )}
+                          {req.withdrawal_source === 'deposited_only' && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                              💳 Deposited
+                            </span>
+                          )}
+                          {(!req.withdrawal_source || req.withdrawal_source === 'both') && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                              ⚡ All
+                            </span>
+                          )}
                         </div>
                         {req.status === 'pending' && (
                           <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center gap-1">

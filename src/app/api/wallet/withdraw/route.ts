@@ -21,6 +21,7 @@ export interface UserWithdrawalItem {
   upi_id: string
   upi_name?: string | null
   status: 'pending' | 'approved' | 'rejected'
+  withdrawal_source?: 'earned_only' | 'deposited_only' | 'both'
   admin_notes?: string | null
   created_at: string
   updated_at?: string
@@ -47,14 +48,25 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    // 2. Fetch lifetime streamer revenue
-    const { data: earningsData } = await supabaseService
-      .from('wallet_transactions')
-      .select('amount')
-      .eq('user_id', user.id)
-      .eq('type', 'streamer_earning')
+    // 2. Fetch lifetime streamer revenue and deposited coins
+    const [{ data: earningsData }, { data: depositsData }] = await Promise.all([
+      supabaseService
+        .from('wallet_transactions')
+        .select('amount')
+        .eq('user_id', user.id)
+        .eq('type', 'streamer_earning'),
+      supabaseService
+        .from('wallet_transactions')
+        .select('amount')
+        .eq('user_id', user.id)
+        .in('type', ['topup', 'purchase']),
+    ])
 
     const totalEarnedCoins = (earningsData || []).reduce(
+      (acc: number, tx: { amount?: number }) => acc + (tx.amount || 0),
+      0
+    )
+    const totalDepositedCoins = (depositsData || []).reduce(
       (acc: number, tx: { amount?: number }) => acc + (tx.amount || 0),
       0
     )
@@ -69,6 +81,8 @@ export async function GET() {
     const rateCoins = Math.max(1, parseInt(settingsMap['streamer_payout_rate_coins'] || '100', 10))
     const rateInr = Math.max(1, parseFloat(settingsMap['streamer_payout_rate_inr'] || '20') || 20)
     const minWithdrawalInr = Math.max(1, parseFloat(settingsMap['min_withdrawal_inr'] || '100') || 100)
+    const allowedSource =
+      (settingsMap['withdrawal_allowed_source'] as 'earned_only' | 'deposited_only' | 'both') || 'both'
     const instructions =
       settingsMap['withdrawal_instructions'] ||
       'Enter your UPI ID and requested amount. Admin will verify and transfer funds to your UPI account manually.'
@@ -99,14 +113,56 @@ export async function GET() {
       }
     }
 
+    const balance = profile?.coin_balance ?? 0
+
+    // Deduct previous active/completed withdrawals from corresponding source
+    const withdrawnEarned = requests
+      .filter((r) => r.status !== 'rejected' && r.withdrawal_source === 'earned_only')
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+    const withdrawnDeposited = requests
+      .filter((r) => r.status !== 'rejected' && r.withdrawal_source === 'deposited_only')
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+    const withdrawnOther = requests
+      .filter(
+        (r) =>
+          r.status !== 'rejected' &&
+          r.withdrawal_source !== 'earned_only' &&
+          r.withdrawal_source !== 'deposited_only'
+      )
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+
+    const availableEarnedCoins = Math.min(
+      balance,
+      Math.max(0, totalEarnedCoins - withdrawnEarned - Math.min(totalEarnedCoins, withdrawnOther))
+    )
+    const availableDepositedCoins = Math.min(
+      balance,
+      Math.max(0, totalDepositedCoins - withdrawnDeposited - Math.min(totalDepositedCoins, withdrawnOther))
+    )
+
+    let withdrawableCoins = balance
+    if (allowedSource === 'earned_only') {
+      withdrawableCoins = availableEarnedCoins
+    } else if (allowedSource === 'deposited_only') {
+      withdrawableCoins = availableDepositedCoins
+    } else {
+      withdrawableCoins = balance
+    }
+
     return NextResponse.json({
       success: true,
-      coinBalance: profile?.coin_balance ?? 0,
+      coinBalance: balance,
       totalEarnedCoins,
+      totalDepositedCoins,
+      availableEarnedCoins,
+      availableDepositedCoins,
+      withdrawableCoins,
+      allowedSource,
       settings: {
         streamer_payout_rate_coins: rateCoins,
         streamer_payout_rate_inr: rateInr,
         min_withdrawal_inr: minWithdrawalInr,
+        withdrawal_allowed_source: allowedSource,
         instructions,
       },
       requests,
@@ -189,6 +245,98 @@ export async function POST(request: NextRequest) {
     }
 
     const currentBalance = profile.coin_balance ?? 0
+
+    // Fetch user's lifetime earnings & deposits to enforce allowed source policy
+    const allowedSource =
+      (settingsMap['withdrawal_allowed_source'] as 'earned_only' | 'deposited_only' | 'both') || 'both'
+
+    const [{ data: earningsData }, { data: depositsData }] = await Promise.all([
+      supabaseService
+        .from('wallet_transactions')
+        .select('amount')
+        .eq('user_id', user.id)
+        .eq('type', 'streamer_earning'),
+      supabaseService
+        .from('wallet_transactions')
+        .select('amount')
+        .eq('user_id', user.id)
+        .in('type', ['topup', 'purchase']),
+    ])
+
+    const totalEarnedCoins = (earningsData || []).reduce(
+      (acc: number, tx: { amount?: number }) => acc + (tx.amount || 0),
+      0
+    )
+    const totalDepositedCoins = (depositsData || []).reduce(
+      (acc: number, tx: { amount?: number }) => acc + (tx.amount || 0),
+      0
+    )
+
+    // Calculate existing withdrawals to find available amounts
+    let userExistingRequests: UserWithdrawalItem[] = []
+    const { data: dbExisting } = await supabaseService.from('withdrawal_requests').select('*').eq('user_id', user.id)
+    if (Array.isArray(dbExisting)) {
+      userExistingRequests = dbExisting
+    } else if (settingsMap['streamer_withdrawal_requests']) {
+      try {
+        const parsed = JSON.parse(settingsMap['streamer_withdrawal_requests'])
+        if (Array.isArray(parsed)) {
+          userExistingRequests = parsed.filter((r: UserWithdrawalItem) => r.user_id === user.id)
+        }
+      } catch {}
+    }
+
+    const withdrawnEarned = userExistingRequests
+      .filter((r) => r.status !== 'rejected' && r.withdrawal_source === 'earned_only')
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+    const withdrawnDeposited = userExistingRequests
+      .filter((r) => r.status !== 'rejected' && r.withdrawal_source === 'deposited_only')
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+    const withdrawnOther = userExistingRequests
+      .filter(
+        (r) =>
+          r.status !== 'rejected' &&
+          r.withdrawal_source !== 'earned_only' &&
+          r.withdrawal_source !== 'deposited_only'
+      )
+      .reduce((acc, r) => acc + (r.coins || 0), 0)
+
+    const availableEarnedCoins = Math.min(
+      currentBalance,
+      Math.max(0, totalEarnedCoins - withdrawnEarned - Math.min(totalEarnedCoins, withdrawnOther))
+    )
+    const availableDepositedCoins = Math.min(
+      currentBalance,
+      Math.max(0, totalDepositedCoins - withdrawnDeposited - Math.min(totalDepositedCoins, withdrawnOther))
+    )
+
+    // Enforce Admin source policy
+    if (allowedSource === 'earned_only' && coinsNeeded > availableEarnedCoins) {
+      return NextResponse.json(
+        {
+          error: `Platform policy allows withdrawing earned coins only. You requested ${coinsNeeded} coins, but your withdrawable earned balance is ${availableEarnedCoins} coins (Total wallet balance: ${currentBalance} coins).`,
+          requiredCoins: coinsNeeded,
+          availableEarnedCoins,
+          currentBalance,
+          allowedSource,
+        },
+        { status: 400 }
+      )
+    }
+
+    if (allowedSource === 'deposited_only' && coinsNeeded > availableDepositedCoins) {
+      return NextResponse.json(
+        {
+          error: `Platform policy allows withdrawing deposited coins only. You requested ${coinsNeeded} coins, but your withdrawable deposited balance is ${availableDepositedCoins} coins (Total wallet balance: ${currentBalance} coins).`,
+          requiredCoins: coinsNeeded,
+          availableDepositedCoins,
+          currentBalance,
+          allowedSource,
+        },
+        { status: 400 }
+      )
+    }
+
     if (currentBalance < coinsNeeded) {
       return NextResponse.json(
         {
@@ -235,7 +383,8 @@ export async function POST(request: NextRequest) {
       upi_id: cleanUpi,
       upi_name: upi_name ? String(upi_name).trim() : null,
       status: 'pending',
-      admin_notes: 'Awaiting admin transfer via UPI',
+      withdrawal_source: allowedSource,
+      admin_notes: `Awaiting admin transfer via UPI (${allowedSource === 'earned_only' ? 'Earned Coins' : allowedSource === 'deposited_only' ? 'Deposited Coins' : 'Wallet Balance'})`,
       created_at: nowIso,
       updated_at: nowIso,
     }
