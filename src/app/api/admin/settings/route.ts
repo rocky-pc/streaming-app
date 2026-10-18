@@ -68,6 +68,8 @@ export async function GET(request: Request) {
         signup_coin_bonus: parseInt(settingsMap['signup_coin_bonus'] || '50', 10),
         chat_cost_per_message: parseInt(settingsMap['chat_cost_per_message'] || '2', 10),
         streamer_revenue_percent: parseInt(settingsMap['streamer_revenue_percent'] || '70', 10),
+        private_chat_cost_per_message: parseInt(settingsMap['private_chat_cost_per_message'] || '10', 10),
+        private_chat_streamer_revenue_percent: parseInt(settingsMap['private_chat_streamer_revenue_percent'] || '80', 10),
         paid_chat_emojis: paidEmojis,
         topup_packages: packages,
       },
@@ -87,7 +89,15 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    const { signup_coin_bonus, chat_cost_per_message, streamer_revenue_percent, paid_chat_emojis, topup_packages } = body || {}
+    const {
+      signup_coin_bonus,
+      chat_cost_per_message,
+      streamer_revenue_percent,
+      private_chat_cost_per_message,
+      private_chat_streamer_revenue_percent,
+      paid_chat_emojis,
+      topup_packages,
+    } = body || {}
 
     const supabase = createAdminClient()
     const upserts = []
@@ -116,6 +126,25 @@ export async function POST(request: Request) {
         key: 'streamer_revenue_percent',
         value: String(pct),
         description: 'Percentage of chat cost allocated to the broadcaster',
+        updated_at: new Date().toISOString(),
+      })
+    }
+
+    if (private_chat_cost_per_message !== undefined) {
+      upserts.push({
+        key: 'private_chat_cost_per_message',
+        value: String(Math.max(0, parseInt(private_chat_cost_per_message, 10) || 0)),
+        description: 'Cost in coins per message sent in live stream 1-on-1 private chat',
+        updated_at: new Date().toISOString(),
+      })
+    }
+
+    if (private_chat_streamer_revenue_percent !== undefined) {
+      const pct = Math.min(100, Math.max(0, parseInt(private_chat_streamer_revenue_percent, 10) || 0))
+      upserts.push({
+        key: 'private_chat_streamer_revenue_percent',
+        value: String(pct),
+        description: 'Percentage of private chat message fees credited to the broadcaster',
         updated_at: new Date().toISOString(),
       })
     }

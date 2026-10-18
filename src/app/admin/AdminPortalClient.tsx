@@ -103,6 +103,8 @@ interface PlatformEconomics {
   signup_coin_bonus: number
   chat_cost_per_message: number
   streamer_revenue_percent: number
+  private_chat_cost_per_message?: number
+  private_chat_streamer_revenue_percent?: number
   paid_chat_emojis?: PaidEmojiItem[]
 }
 
@@ -223,6 +225,8 @@ export default function AdminPortalClient() {
     signup_coin_bonus: 50,
     chat_cost_per_message: 2,
     streamer_revenue_percent: 70,
+    private_chat_cost_per_message: 10,
+    private_chat_streamer_revenue_percent: 80,
     paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
 
@@ -290,6 +294,8 @@ export default function AdminPortalClient() {
     signup_coin_bonus: 50,
     chat_cost_per_message: 2,
     streamer_revenue_percent: 70,
+    private_chat_cost_per_message: 10,
+    private_chat_streamer_revenue_percent: 80,
     paid_chat_emojis: DEFAULT_PAID_EMOJIS,
   })
   const [isSavingSettings, setIsSavingSettings] = useState(false)
@@ -391,6 +397,8 @@ export default function AdminPortalClient() {
             signup_coin_bonus: settingsData.settings.signup_coin_bonus ?? 50,
             chat_cost_per_message: settingsData.settings.chat_cost_per_message ?? 2,
             streamer_revenue_percent: settingsData.settings.streamer_revenue_percent ?? 70,
+            private_chat_cost_per_message: settingsData.settings.private_chat_cost_per_message ?? 10,
+            private_chat_streamer_revenue_percent: settingsData.settings.private_chat_streamer_revenue_percent ?? 80,
             paid_chat_emojis:
               Array.isArray(settingsData.settings.paid_chat_emojis) &&
               settingsData.settings.paid_chat_emojis.length > 0
@@ -2318,20 +2326,102 @@ export default function AdminPortalClient() {
                     </div>
                   </div>
                 </div>
+
+                {/* 1-on-1 Paid Private Chat Cost (Coins/msg) */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">
+                      Private Chat Cost (Coins)
+                    </span>
+                    <span className="text-base">🔒</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Coins charged to normal viewers per 1-on-1 private message sent directly to the stream host.
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Viewer Cost Per Message</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        value={settingsForm.private_chat_cost_per_message ?? 10}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            private_chat_cost_per_message: Math.max(0, parseInt(e.target.value, 10) || 0),
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pl-8 focus:outline-none focus:border-purple-400"
+                      />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Streamer Private Chat Revenue Share % */}
+                <div className="bg-[#121212] border border-[#2c2c2c] rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-pink-400 uppercase tracking-wider">
+                      Streamer Private Chat %
+                    </span>
+                    <span className="text-base">💎</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Percentage of private chat message fees credited to the broadcaster's wallet.
+                  </p>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 block mb-1">Streamer Private Allocation (%)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={settingsForm.private_chat_streamer_revenue_percent ?? 80}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            private_chat_streamer_revenue_percent: Math.min(
+                              100,
+                              Math.max(0, parseInt(e.target.value, 10) || 0)
+                            ),
+                          })
+                        }
+                        className="w-full bg-[#181818] border border-[#333] rounded-xl px-3 py-2 text-sm font-bold text-white pr-8 focus:outline-none focus:border-pink-400"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">%</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Live Preview Calculation */}
-              <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-400" />
-                  <span>
-                    <strong>Economic Simulation:</strong> A viewer posts 1 chat message → Viewer pays{' '}
-                    <strong className="text-amber-400">🪙 {settingsForm.chat_cost_per_message} coins</strong> → Streamer receives{' '}
-                    <strong className="text-emerald-400">
-                      🪙 {Math.floor(settingsForm.chat_cost_per_message * (settingsForm.streamer_revenue_percent / 100))} coins
-                    </strong>{' '}
-                    ({settingsForm.streamer_revenue_percent}%).
-                  </span>
+              <div className="space-y-2">
+                <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <span>
+                      <strong>Public Live Chat:</strong> Viewer pays{' '}
+                      <strong className="text-amber-400">🪙 {settingsForm.chat_cost_per_message} coins/msg</strong> → Streamer receives{' '}
+                      <strong className="text-emerald-400">
+                        🪙 {Math.floor(settingsForm.chat_cost_per_message * (settingsForm.streamer_revenue_percent / 100))} coins
+                      </strong>{' '}
+                      ({settingsForm.streamer_revenue_percent}%).
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-800/50 text-xs text-zinc-300 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">🔒</span>
+                    <span>
+                      <strong>1-on-1 Paid Private Chat:</strong> Normal viewer pays{' '}
+                      <strong className="text-purple-300">🪙 {settingsForm.private_chat_cost_per_message ?? 10} coins/msg</strong> → Streamer receives{' '}
+                      <strong className="text-emerald-400">
+                        🪙 {Math.floor((settingsForm.private_chat_cost_per_message ?? 10) * ((settingsForm.private_chat_streamer_revenue_percent ?? 80) / 100))} coins
+                      </strong>{' '}
+                      ({settingsForm.private_chat_streamer_revenue_percent ?? 80}%) • Streamer chats completely <strong>FREE</strong> (WhatsApp-style 1-on-1 inbox).
+                    </span>
+                  </div>
                 </div>
               </div>
 

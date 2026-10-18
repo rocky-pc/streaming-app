@@ -1,13 +1,12 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { Room, RoomEvent } from 'livekit-client'
 import { useAuth } from '@/context/AuthContext'
 import {
   Send,
   MessageSquare,
-  ChevronDown,
   ArrowDown,
   Smile,
   Crown,
@@ -17,8 +16,13 @@ import {
   AlertTriangle,
   Coins,
   Sparkles,
-  Zap,
+  ChevronLeft,
+  Search,
+  User as UserIcon,
+  MessageCircle,
+  Plus,
 } from 'lucide-react'
+import { TopUpModal } from '@/components/wallet/TopUpModal'
 
 export interface ChatMessage {
   id: string
@@ -34,6 +38,37 @@ export interface ChatMessage {
     display_name: string | null
     avatar_url: string | null
   } | null
+}
+
+export interface PrivateChatMessage {
+  id: string
+  stream_id: string
+  sender_id: string
+  recipient_id: string
+  message: string
+  coins_paid: number
+  is_read: boolean
+  created_at: string
+  sender?: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+  } | null
+}
+
+export interface PrivateConversation {
+  otherUser: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+  }
+  lastMessage: string
+  lastMessageAt: string
+  lastMessageSenderId: string
+  unreadCount: number
+  totalCoinsPaid: number
 }
 
 interface PaidEmoji {
@@ -68,7 +103,12 @@ export function LiveChat({
   className = '',
   onClose,
 }: LiveChatProps) {
-  const { user, profile } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
+
+  // Tab State: 'public' (Live Chat) vs 'private' (1-on-1 Paid Private Chat)
+  const [activeChatTab, setActiveChatTab] = useState<'public' | 'private'>('public')
+
+  // Public Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputText, setInputText] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -79,14 +119,50 @@ export function LiveChat({
   // Economics & Wallet state
   const [chatCost, setChatCost] = useState<number>(0)
   const [streamerPercent, setStreamerPercent] = useState<number>(70)
+  const [privateChatCost, setPrivateChatCost] = useState<number>(10)
+  const [privateChatStreamerPercent, setPrivateChatStreamerPercent] = useState<number>(80)
   const [userCoins, setUserCoins] = useState<number | null>(null)
   const [userChatEnabled, setUserChatEnabled] = useState<boolean>(true)
   const [paidEmojis, setPaidEmojis] = useState<PaidEmoji[]>(DEFAULT_PAID_EMOJIS)
 
+  // Private Chat State
+  const [conversations, setConversations] = useState<PrivateConversation[]>([])
+  const [selectedViewer, setSelectedViewer] = useState<PrivateConversation['otherUser'] | null>(null)
+  const [privateMessages, setPrivateMessages] = useState<PrivateChatMessage[]>([])
+  const [privateInputText, setPrivateInputText] = useState('')
+  const [isSendingPrivate, setIsSendingPrivate] = useState(false)
+  const [viewerSearch, setViewerSearch] = useState('')
+  const [privateChatError, setPrivateChatError] = useState<string | null>(null)
+  const [hostProfile, setHostProfile] = useState<{
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+  } | null>(null)
+
+  // Top Up Modal State
+  const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const privateScrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // 1. Initial Load & Background Live Polling of chat messages & economics from API
+  const isHost = Boolean(
+    isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
+  )
+
+  const currentBalance = userCoins ?? profile?.coin_balance ?? 50
+  const isBalanceInsufficient = !isHost && chatCost > 0 && currentBalance < chatCost
+  const isPrivateBalanceInsufficient = !isHost && currentBalance < privateChatCost
+
+  // Total unread private messages for host
+  const totalUnreadPrivateCount = useMemo(() => {
+    return conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0)
+  }, [conversations])
+
+  // --------------------------------------------------------------------------
+  // 1. Fetch Public Chat & Economics
+  // --------------------------------------------------------------------------
   useEffect(() => {
     let isMounted = true
 
@@ -99,12 +175,10 @@ export function LiveChat({
             if (json.messages && Array.isArray(json.messages)) {
               setMessages((prev) => {
                 const map = new Map<string, ChatMessage>()
-                // First keep existing messages
                 for (const m of prev) {
                   map.set(m.id, m)
                 }
                 let hasNew = false
-                // Merge incoming server messages
                 for (const m of json.messages) {
                   if (!map.has(m.id)) {
                     map.set(m.id, m)
@@ -122,6 +196,12 @@ export function LiveChat({
             if (json.economics) {
               setChatCost(json.economics.chatCost ?? 0)
               setStreamerPercent(json.economics.streamerPercent ?? 70)
+              if (typeof json.economics.privateChatCost === 'number') {
+                setPrivateChatCost(json.economics.privateChatCost)
+              }
+              if (typeof json.economics.privateChatStreamerPercent === 'number') {
+                setPrivateChatStreamerPercent(json.economics.privateChatStreamerPercent)
+              }
               if (json.economics.userCoins !== null && json.economics.userCoins !== undefined) {
                 setUserCoins(json.economics.userCoins)
               }
@@ -140,7 +220,6 @@ export function LiveChat({
     }
 
     fetchHistory()
-    // Live polling every 2.5 seconds so all viewers/streamers receive chat messages live without refreshing
     const pollInterval = setInterval(fetchHistory, 2500)
     window.addEventListener('focus', fetchHistory)
 
@@ -159,7 +238,69 @@ export function LiveChat({
     }
   }, [profile, userCoins])
 
-  // 2. Real-Time DataChannel Listeners via LiveKit
+  // --------------------------------------------------------------------------
+  // 2. Fetch Private Chats (WhatsApp-like for Host, 1-on-1 for Viewers)
+  // --------------------------------------------------------------------------
+  const fetchPrivateChat = useCallback(async () => {
+    if (!user) return
+
+    try {
+      if (isHost) {
+        // If host has selected a specific viewer, fetch 1-on-1 messages with that viewer
+        if (selectedViewer) {
+          const res = await fetch(
+            `/api/live/chat/private?streamId=${streamId}&withUserId=${selectedViewer.id}`
+          )
+          if (res.ok) {
+            const data = await res.json()
+            if (Array.isArray(data.messages)) {
+              setPrivateMessages(data.messages)
+            }
+          }
+        }
+
+        // Always also fetch conversation summaries to keep unread count and latest messages updated
+        const convRes = await fetch(`/api/live/chat/private?streamId=${streamId}`)
+        if (convRes.ok) {
+          const convData = await convRes.json()
+          if (Array.isArray(convData.conversations)) {
+            setConversations(convData.conversations)
+          }
+        }
+      } else {
+        // Normal viewer: fetch 1-on-1 messages with host
+        const res = await fetch(`/api/live/chat/private?streamId=${streamId}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.messages)) {
+            setPrivateMessages(data.messages)
+          }
+          if (data.otherUser) {
+            setHostProfile(data.otherUser)
+          }
+          if (typeof data.economics?.privateChatCost === 'number') {
+            setPrivateChatCost(data.economics.privateChatCost)
+          }
+          if (data.economics?.userCoins !== null && data.economics?.userCoins !== undefined) {
+            setUserCoins(data.economics.userCoins)
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching private chats:', err)
+    }
+  }, [user, isHost, selectedViewer, streamId])
+
+  useEffect(() => {
+    fetchPrivateChat()
+    // Poll private chat frequently so incoming messages appear live
+    const interval = setInterval(fetchPrivateChat, 2500)
+    return () => clearInterval(interval)
+  }, [fetchPrivateChat])
+
+  // --------------------------------------------------------------------------
+  // 3. Real-Time DataChannel Listeners via LiveKit
+  // --------------------------------------------------------------------------
   useEffect(() => {
     if (!room) return
 
@@ -187,7 +328,7 @@ export function LiveChat({
     }
   }, [room])
 
-  // Auto-scroll to bottom inside the chat container ONLY (never scrolls window/page)
+  // Scroll to bottom helper for public chat
   const scrollToBottom = useCallback((smooth = true) => {
     const el = scrollContainerRef.current
     if (el) {
@@ -199,20 +340,35 @@ export function LiveChat({
     }
   }, [])
 
-  const prevCountRef = useRef(0)
+  // Scroll to bottom helper for private chat
+  const scrollToPrivateBottom = useCallback((smooth = true) => {
+    const el = privateScrollContainerRef.current
+    if (el) {
+      if (smooth) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      } else {
+        el.scrollTop = el.scrollHeight
+      }
+    }
+  }, [])
 
-  // Auto-scroll only when user is not scrolled up and new messages arrive
+  const prevCountRef = useRef(0)
   useEffect(() => {
-    if (!isScrolledUp) {
+    if (activeChatTab === 'public' && !isScrolledUp) {
       const isNew = messages.length > prevCountRef.current
       if (isNew || prevCountRef.current === 0) {
         scrollToBottom(prevCountRef.current > 0)
       }
     }
     prevCountRef.current = messages.length
-  }, [messages.length, isScrolledUp, scrollToBottom])
+  }, [messages.length, isScrolledUp, activeChatTab, scrollToBottom])
 
-  // Track scroll position to pause auto-scroll
+  useEffect(() => {
+    if (activeChatTab === 'private') {
+      scrollToPrivateBottom(false)
+    }
+  }, [privateMessages.length, selectedViewer, activeChatTab, scrollToPrivateBottom])
+
   const handleScroll = () => {
     if (!scrollContainerRef.current) return
     const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
@@ -220,7 +376,6 @@ export function LiveChat({
     setIsScrolledUp(!isAtBottom)
   }
 
-  // Auto dismiss chat error
   useEffect(() => {
     if (chatError) {
       const t = setTimeout(() => setChatError(null), 5000)
@@ -228,7 +383,16 @@ export function LiveChat({
     }
   }, [chatError])
 
-  // 3. Send Message Handler (Normal Message or with Paid Emoji)
+  useEffect(() => {
+    if (privateChatError) {
+      const t = setTimeout(() => setPrivateChatError(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [privateChatError])
+
+  // --------------------------------------------------------------------------
+  // 4. Send Public Message Handler
+  // --------------------------------------------------------------------------
   const handleSendMessage = async (e?: React.FormEvent, selectedPaidEmoji?: PaidEmoji) => {
     if (e) e.preventDefault()
     setChatError(null)
@@ -237,117 +401,148 @@ export function LiveChat({
     if (!cleanText && !selectedPaidEmoji) return
     if (isSending || !user) return
 
-    // Pre-flight chat permission
     if (!userChatEnabled) {
       setChatError('Your live chat privileges have been disabled by an administrator.')
       return
     }
 
-    const isHost = Boolean(
-      isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
-    )
+    const currentCoins = currentBalance
+    const itemCost = selectedPaidEmoji ? selectedPaidEmoji.cost : chatCost
+    const requiredCoins = isHost ? 0 : itemCost
 
-    const currentBalance = userCoins ?? profile?.coin_balance ?? 50
-    // Streamer / Host is NEVER charged for chatting in their own stream
-    const requiredCoins = isHost ? 0 : (selectedPaidEmoji ? selectedPaidEmoji.cost : chatCost)
-
-    if (!isHost && requiredCoins > 0 && currentBalance < requiredCoins) {
-      setChatError(
-        selectedPaidEmoji
-          ? `Insufficient coins for ${selectedPaidEmoji.emoji}! Requires ${selectedPaidEmoji.cost} coins (Your balance: ${currentBalance}).`
-          : `Insufficient coins! Requires ${chatCost} coins to chat (Your balance: ${currentBalance}).`
-      )
+    if (requiredCoins > 0 && currentCoins < requiredCoins) {
+      setChatError(`Insufficient coins. Requires ${requiredCoins} coins (Your balance: ${currentCoins} coins).`)
+      setIsTopUpModalOpen(true)
       return
     }
 
     setIsSending(true)
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-
-    const messageText = cleanText || (selectedPaidEmoji ? `${selectedPaidEmoji.emoji}` : '')
-
-    const optimisticMessage: ChatMessage = {
-      id: tempId,
-      stream_id: streamId,
-      user_id: user.id,
-      message: messageText,
-      paidEmoji: selectedPaidEmoji?.emoji || null,
-      coinsPaid: requiredCoins > 0 ? requiredCoins : null,
-      created_at: new Date().toISOString(),
-      profiles: {
-        id: user.id,
-        username: profile?.username || user.user_metadata?.username || 'user',
-        display_name: profile?.display_name || user.user_metadata?.display_name || user.email || 'Viewer',
-        avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || null,
-      },
-    }
-
-    // Immediately display locally
-    setMessages((prev) => [...prev, optimisticMessage])
-    setInputText('')
-    setIsScrolledUp(false)
     setShowPaidEmojisTray(false)
 
-    // Broadcast instantly to all connected viewers over LiveKit DataChannel
-    if (room && room.localParticipant) {
-      try {
-        const payload = new TextEncoder().encode(
-          JSON.stringify({
-            type: 'chat_message',
-            message: optimisticMessage,
-          })
-        )
-        await room.localParticipant.publishData(payload, { reliable: true })
-      } catch (err) {
-        console.error('Failed to broadcast via LiveKit data channel:', err)
-      }
-    }
-
-    // Persist message to database via API & process coins
     try {
       const res = await fetch('/api/live/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           streamId,
-          message: cleanText || undefined,
-          paidEmoji: selectedPaidEmoji?.emoji || undefined,
-          emojiCost: selectedPaidEmoji?.cost || undefined,
+          message: cleanText,
+          paidEmoji: selectedPaidEmoji?.emoji || null,
+          emojiCost: selectedPaidEmoji?.cost || null,
         }),
       })
 
-      const json = await res.json()
+      const data = await res.json()
 
-      if (res.ok) {
-        if (json.message) {
-          // Replace optimistic ID with persistent ID
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === tempId
-                ? {
-                    ...json.message,
-                    paidEmoji: selectedPaidEmoji?.emoji || null,
-                    coinsPaid: requiredCoins > 0 ? requiredCoins : null,
-                  }
-                : m
+      if (!res.ok) {
+        if (res.status === 402) {
+          setChatError(data.error || 'Insufficient coins')
+          setIsTopUpModalOpen(true)
+        } else {
+          setChatError(data.error || 'Failed to send message')
+        }
+        return
+      }
+
+      if (data.message) {
+        setMessages((prev) => [...prev, data.message])
+        setInputText('')
+        if (typeof data.remainingCoins === 'number') {
+          setUserCoins(data.remainingCoins)
+        }
+        scrollToBottom(true)
+
+        if (room) {
+          try {
+            const encoder = new TextEncoder()
+            const payload = encoder.encode(
+              JSON.stringify({
+                type: 'chat_message',
+                message: data.message,
+              })
             )
-          )
-        }
-        if (json.remainingCoins !== undefined) {
-          setUserCoins(json.remainingCoins)
-        }
-      } else {
-        // Rollback optimistic message on failure
-        setMessages((prev) => prev.filter((m) => m.id !== tempId))
-        setChatError(json.error || 'Failed to send chat message')
-        if (res.status === 403) {
-          setUserChatEnabled(false)
+            await room.localParticipant.publishData(payload, { reliable: true })
+          } catch (broadcastErr) {
+            console.warn('DataChannel broadcast failed:', broadcastErr)
+          }
         }
       }
-    } catch {
-      setMessages((prev) => prev.filter((m) => m.id !== tempId))
-      setChatError('Connection error sending chat message.')
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Error sending message'
+      setChatError(errorMsg)
     } finally {
       setIsSending(false)
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 5. Send 1-on-1 Paid Private Message Handler
+  // --------------------------------------------------------------------------
+  const handleSendPrivateMessage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setPrivateChatError(null)
+
+    const cleanText = privateInputText.trim()
+    if (!cleanText || isSendingPrivate || !user) return
+
+    if (!userChatEnabled) {
+      setPrivateChatError('Your chat privileges have been disabled by an administrator.')
+      return
+    }
+
+    // Normal viewer balance check (Streamer chats completely FREE)
+    if (!isHost && currentBalance < privateChatCost) {
+      setPrivateChatError(
+        `Insufficient coins. Private chat requires ${privateChatCost} coins (Your balance: ${currentBalance} coins).`
+      )
+      setIsTopUpModalOpen(true)
+      return
+    }
+
+    const targetRecipientId = isHost ? selectedViewer?.id : broadcasterId
+    if (!targetRecipientId) {
+      setPrivateChatError('Please select a recipient to send message.')
+      return
+    }
+
+    setIsSendingPrivate(true)
+
+    try {
+      const res = await fetch('/api/live/chat/private', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          streamId,
+          message: cleanText,
+          recipientId: targetRecipientId,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (res.status === 402) {
+          setPrivateChatError(data.error || 'Insufficient coins')
+          setIsTopUpModalOpen(true)
+        } else {
+          setPrivateChatError(data.error || 'Failed to send private message')
+        }
+        return
+      }
+
+      if (data.message) {
+        setPrivateMessages((prev) => [...prev, data.message])
+        setPrivateInputText('')
+        if (typeof data.remainingCoins === 'number') {
+          setUserCoins(data.remainingCoins)
+        }
+        scrollToPrivateBottom(true)
+        fetchPrivateChat()
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Error sending private message'
+      setPrivateChatError(errorMsg)
+    } finally {
+      setIsSendingPrivate(false)
     }
   }
 
@@ -360,47 +555,94 @@ export function LiveChat({
     }
   }
 
-  const isHost = Boolean(
-    isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
-  )
-
-  const currentBalance = userCoins ?? profile?.coin_balance ?? 50
-  const isBalanceInsufficient = !isHost && chatCost > 0 && currentBalance < chatCost
+  // Filter conversations for host WhatsApp search
+  const filteredConversations = useMemo(() => {
+    if (!viewerSearch.trim()) return conversations
+    const q = viewerSearch.toLowerCase()
+    return conversations.filter(
+      (c) =>
+        c.otherUser.username.toLowerCase().includes(q) ||
+        (c.otherUser.display_name && c.otherUser.display_name.toLowerCase().includes(q)) ||
+        c.lastMessage.toLowerCase().includes(q)
+    )
+  }, [conversations, viewerSearch])
 
   return (
     <div
       className={`flex flex-col bg-[#0f0f0f] border border-[#272727] rounded-2xl overflow-hidden shadow-2xl relative select-none ${className}`}
     >
-      {/* Header */}
-      <div className="px-4 py-3 bg-[#181818] border-b border-[#272727] flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="h-4 w-4 text-red-500" />
-          <span className="font-bold text-sm text-white">Live Chat</span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+      {/* Top Header with Tab Switcher */}
+      <div className="px-3 py-2.5 bg-[#181818] border-b border-[#272727] flex items-center justify-between shrink-0 gap-2">
+        {/* Tab Switcher Pills */}
+        <div className="flex items-center gap-1 bg-[#121212] p-1 rounded-xl border border-[#262626]">
+          {/* Public Live Chat Tab */}
+          <button
+            type="button"
+            onClick={() => setActiveChatTab('public')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+              activeChatTab === 'public'
+                ? 'bg-[#272727] text-white shadow-sm'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <MessageSquare className="h-3.5 w-3.5 text-red-500" />
+            <span>Live Chat</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+          </button>
+
+          {/* Private Chat Tab (Paid Option for Viewers / WhatsApp Inbox for Streamer) */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveChatTab('private')
+              fetchPrivateChat()
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all relative ${
+              activeChatTab === 'private'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Lock className="h-3.5 w-3.5 text-purple-300" />
+            <span>{isHost ? 'Private Chats' : 'Private Chat'}</span>
+
+            {/* Unread badge for streamer */}
+            {isHost && totalUnreadPrivateCount > 0 && (
+              <span className="bg-emerald-500 text-black text-[10px] font-black px-1.5 py-0.2 rounded-full leading-none animate-pulse">
+                {totalUnreadPrivateCount}
+              </span>
+            )}
+
+            {/* Price indicator for normal viewers */}
+            {!isHost && (
+              <span className="text-[10px] bg-purple-950/70 border border-purple-400/40 text-purple-200 px-1.5 py-0.2 rounded-full font-mono">
+                🪙 {privateChatCost}
+              </span>
+            )}
+          </button>
         </div>
 
+        {/* Status Badge / Close Button */}
         <div className="flex items-center gap-2">
-          {/* Active Coin Economics Pill / Host Badge */}
           {isHost ? (
             <div
-              className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold"
-              title="You are the host of this stream. Live chat is completely free for you!"
+              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold"
+              title="You are the host of this stream. All chats are completely free for you!"
             >
               <Crown className="h-3 w-3 text-amber-400" />
               <span>Host (Free Chat)</span>
             </div>
-          ) : chatCost > 0 ? (
-            <div
-              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold"
-              title={`${chatCost} coins deducted per chat. ${streamerPercent}% to streamer.`}
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsTopUpModalOpen(true)}
+              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold transition-colors cursor-pointer"
+              title="Click to top up coins"
             >
               <span>🪙</span>
-              <span>{chatCost} / msg</span>
-            </div>
-          ) : (
-            <span className="text-[10px] font-semibold text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-              Free Chat
-            </span>
+              <span>{currentBalance}</span>
+              <Plus className="h-2.5 w-2.5 ml-0.5 text-amber-400" />
+            </button>
           )}
 
           {onClose && (
@@ -414,309 +656,719 @@ export function LiveChat({
         </div>
       </div>
 
-      {/* Messages Scroll Area */}
-      <div
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs text-[#f1f1f1] divide-y divide-zinc-900/40"
-      >
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-center py-12 space-y-2">
-            <MessageSquare className="h-8 w-8 text-zinc-700 stroke-1" />
-            <p className="text-xs">Welcome to live chat!</p>
-            <p className="text-[11px] text-zinc-600">Messages & Super Emojis will appear here in real time.</p>
-          </div>
-        ) : (
-          messages.map((msg) => {
-            const isMsgBroadcaster = msg.user_id === broadcasterId
-            const displayName =
-              msg.profiles?.display_name || msg.profiles?.username || 'Viewer'
-            const avatarUrl = msg.profiles?.avatar_url
-            const isPaidSuperEmoji = Boolean(
-              msg.paidEmoji && typeof msg.paidEmoji === 'string' && msg.paidEmoji.trim().length > 0
-            )
+      {/* ===================================================================== */}
+      {/* TAB 1: PUBLIC LIVE CHAT                                              */}
+      {/* ===================================================================== */}
+      {activeChatTab === 'public' && (
+        <>
+          {/* Messages Scroll Area */}
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs text-[#f1f1f1] divide-y divide-zinc-900/40"
+          >
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-center py-12 space-y-2">
+                <MessageSquare className="h-8 w-8 text-zinc-700 stroke-1" />
+                <p className="text-xs">Welcome to live chat!</p>
+                <p className="text-[11px] text-zinc-600">Messages & Super Emojis will appear here in real time.</p>
+              </div>
+            ) : (
+              messages.map((msg) => {
+                const isMsgBroadcaster = msg.user_id === broadcasterId
+                const displayName =
+                  msg.profiles?.display_name || msg.profiles?.username || 'Viewer'
+                const avatarUrl = msg.profiles?.avatar_url
+                const isPaidSuperEmoji = Boolean(
+                  msg.paidEmoji && typeof msg.paidEmoji === 'string' && msg.paidEmoji.trim().length > 0
+                )
 
-            // RENDER PAID SUPER EMOJI (YOUTUBE SUPER CHAT STYLE)
-            if (isPaidSuperEmoji) {
-              return (
-                <div
-                  key={msg.id}
-                  className="pt-2.5 first:pt-0"
-                >
-                  <div className="rounded-xl overflow-hidden border border-amber-500/40 bg-gradient-to-br from-amber-500/20 via-zinc-900/90 to-zinc-900 shadow-lg shadow-amber-500/10 animate-scale-up">
-                    {/* Super Sticker Header Bar */}
-                    <div className="px-3 py-1.5 bg-amber-500/25 border-b border-amber-500/30 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-amber-300 font-extrabold text-[10px] tracking-wider uppercase">
-                        <Sparkles className="h-3 w-3 text-amber-400" />
-                        <span>SUPER EMOJI • {msg.coinsPaid ?? 5} COINS</span>
-                      </div>
-                      <span className="text-[10px] text-amber-300/70 font-mono">
-                        {formatChatTime(msg.created_at)}
-                      </span>
-                    </div>
-
-                    {/* Super Sticker Content Body */}
-                    <div className="p-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {avatarUrl ? (
-                          <img
-                            src={avatarUrl}
-                            alt={displayName}
-                            className="w-7 h-7 rounded-full object-cover shrink-0 ring-2 ring-amber-500/40"
-                          />
-                        ) : (
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-[#9c27b0] to-[#e91e63] flex items-center justify-center text-white text-xs font-bold uppercase shrink-0 ring-2 ring-amber-500/40">
-                            {displayName.charAt(0)}
+                // RENDER PAID SUPER EMOJI
+                if (isPaidSuperEmoji) {
+                  return (
+                    <div key={msg.id} className="pt-2.5 first:pt-0">
+                      <div className="rounded-xl overflow-hidden border border-amber-500/40 bg-gradient-to-br from-amber-500/20 via-zinc-900/90 to-zinc-900 shadow-lg shadow-amber-500/10">
+                        <div className="px-3 py-1.5 bg-amber-500/25 border-b border-amber-500/30 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-amber-300 font-extrabold text-[10px] tracking-wider uppercase">
+                            <Sparkles className="h-3 w-3 text-amber-400" />
+                            <span>Super Emoji</span>
                           </div>
-                        )}
-                        <div className="min-w-0">
-                          <span className="font-bold text-white text-xs block truncate">
-                            {displayName}
-                          </span>
-                          {msg.message && msg.message !== msg.paidEmoji && (
-                            <p className="text-zinc-200 text-xs mt-0.5 break-words">
-                              {msg.message}
-                            </p>
-                          )}
+                          {msg.coinsPaid && msg.coinsPaid > 0 ? (
+                            <span className="text-[10px] font-bold text-amber-400 bg-black/40 px-2 py-0.5 rounded-full border border-amber-500/30">
+                              🪙 {msg.coinsPaid} Coins
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="p-3 flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 shrink-0 border border-amber-500/30">
+                            {avatarUrl ? (
+                              <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center font-bold text-xs text-amber-400">
+                                {displayName.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between gap-1 mb-1">
+                              <span className="font-bold text-xs text-amber-200 truncate">{displayName}</span>
+                              <span className="text-[10px] text-zinc-500 shrink-0 font-mono">
+                                {formatChatTime(msg.created_at)}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 my-1">
+                              <span className="text-3xl filter drop-shadow-md select-none">{msg.paidEmoji}</span>
+                              {msg.message && (
+                                <p className="text-xs text-zinc-200 font-medium break-words leading-relaxed">
+                                  {msg.message}
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
+                    </div>
+                  )
+                }
 
-                      {/* Prominent Paid Emoji Sticker */}
-                      <span className="text-3xl sm:text-4xl filter drop-shadow-md shrink-0 select-none animate-pulse">
-                        {msg.paidEmoji}
-                      </span>
+                // RENDER REGULAR LIVE CHAT MESSAGE
+                return (
+                  <div key={msg.id} className="pt-2 first:pt-0 group hover:bg-zinc-900/30 -mx-1 px-1 rounded-lg transition-colors">
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-6 h-6 rounded-full overflow-hidden bg-zinc-800 shrink-0 mt-0.5 border border-zinc-700">
+                        {avatarUrl ? (
+                          <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center font-bold text-[10px] text-zinc-300">
+                            {displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                          <span
+                            className={`font-semibold text-xs truncate ${
+                              isMsgBroadcaster ? 'text-amber-400 flex items-center gap-1 font-bold' : 'text-zinc-400'
+                            }`}
+                          >
+                            {displayName}
+                            {isMsgBroadcaster && (
+                              <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                                Host
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-[10px] text-zinc-600 font-mono">{formatChatTime(msg.created_at)}</span>
+                        </div>
+
+                        <p className="text-xs text-zinc-200 break-words leading-relaxed mt-0.5">{msg.message}</p>
+                      </div>
                     </div>
                   </div>
+                )
+              })
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Scrolled Up Notice */}
+          {isScrolledUp && (
+            <button
+              onClick={() => scrollToBottom(true)}
+              className="absolute bottom-20 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-zinc-800/95 hover:bg-zinc-700 border border-zinc-700 text-white rounded-full text-xs font-semibold shadow-xl flex items-center gap-1.5 transition-all animate-bounce"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+              <span>New messages</span>
+            </button>
+          )}
+
+          {/* Chat Error Notice */}
+          {chatError && (
+            <div className="mx-3 my-1 p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                <span>{chatError}</span>
+              </div>
+              <button onClick={() => setChatError(null)} className="text-red-400 hover:text-white">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Paid Super Emojis Shelf Tray */}
+          {showPaidEmojisTray && (
+            <div className="p-3 bg-[#141414] border-t border-[#272727] shrink-0 space-y-2 animate-slide-up">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Send Paid Super Emoji</span>
                 </div>
-              )
-            }
+                <button
+                  type="button"
+                  onClick={() => setShowPaidEmojisTray(false)}
+                  className="text-zinc-500 hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
-            // STANDARD LIVE CHAT MESSAGE
-            return (
-              <div
-                key={msg.id}
-                className="pt-2 first:pt-0 flex items-start gap-2.5 group hover:bg-white/[0.02] px-1 py-0.5 rounded-lg transition-colors"
-              >
-                {/* User Avatar */}
-                {avatarUrl ? (
-                  <img
-                    src={avatarUrl}
-                    alt={displayName}
-                    className="w-6 h-6 rounded-full object-cover shrink-0 mt-0.5 ring-1 ring-zinc-700"
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-[#9c27b0] to-[#e91e63] flex items-center justify-center text-white text-[10px] font-bold uppercase shrink-0 mt-0.5">
-                    {displayName.charAt(0)}
-                  </div>
-                )}
-
-                {/* Message Body */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span
-                      className={`font-semibold truncate text-[11px] ${
-                        isMsgBroadcaster
-                          ? 'text-red-400 font-bold'
-                          : 'text-zinc-400 hover:text-white transition-colors'
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 pt-1">
+                {paidEmojis.map((item) => {
+                  const canAfford = isHost || currentBalance >= item.cost
+                  return (
+                    <button
+                      key={item.emoji}
+                      type="button"
+                      onClick={() => handleSendMessage(undefined, item)}
+                      disabled={!canAfford || isSending}
+                      className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${
+                        canAfford
+                          ? 'bg-[#1f1f1f] hover:bg-[#282828] border-zinc-700 hover:border-amber-500/50 hover:scale-105 active:scale-95'
+                          : 'bg-zinc-900/60 border-zinc-800 opacity-40 cursor-not-allowed'
                       }`}
+                      title={isHost ? `${item.emoji} Free for Host` : `${item.emoji} costs ${item.cost} coins`}
                     >
-                      {displayName}
-                    </span>
-
-                    {/* Broadcaster Badge */}
-                    {isMsgBroadcaster && (
-                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-red-600/90 text-white rounded text-[9px] font-bold tracking-wider uppercase">
-                        <Crown className="h-2.5 w-2.5" />
-                        Host
+                      <span className="text-2xl select-none mb-1">{item.emoji}</span>
+                      <span className="text-[10px] font-bold text-amber-400 flex items-center gap-0.5">
+                        {isHost ? (
+                          <span className="text-[9px] text-emerald-400 font-bold">FREE</span>
+                        ) : (
+                          <>
+                            <span>🪙</span>
+                            <span>{item.cost}</span>
+                          </>
+                        )}
                       </span>
-                    )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
-                    <span className="text-[10px] text-zinc-600">
-                      {formatChatTime(msg.created_at)}
-                    </span>
+          {/* Bottom Public Chat Input Bar */}
+          <div className="p-3 bg-[#181818] border-t border-[#272727] shrink-0 space-y-2">
+            {user ? (
+              !userChatEnabled ? (
+                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2.5">
+                  <Lock className="h-4 w-4 shrink-0 text-red-400" />
+                  <span>Your live chat privileges have been disabled by an administrator.</span>
+                </div>
+              ) : (
+                <form onSubmit={(e) => handleSendMessage(e)} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPaidEmojisTray(!showPaidEmojisTray)}
+                      className={`p-2 rounded-full border transition-colors shrink-0 ${
+                        showPaidEmojisTray
+                          ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
+                          : 'bg-[#141414] hover:bg-[#242424] text-amber-400 border-[#303030]'
+                      }`}
+                      title="Send Super Emoji"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                    </button>
 
-                    {Boolean(msg.coinsPaid && msg.coinsPaid > 0) && (
-                      <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-400 font-mono">
-                        <span>🪙</span>
-                        <span>{msg.coinsPaid}</span>
-                      </span>
-                    )}
+                    <input
+                      type="text"
+                      maxLength={300}
+                      disabled={isBalanceInsufficient}
+                      placeholder={
+                        isBalanceInsufficient
+                          ? `Insufficient coins (${currentBalance}/${chatCost} coins needed)`
+                          : isHost
+                          ? 'Chat with your viewers (Free for Host)...'
+                          : 'Send a message or Super Emoji...'
+                      }
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      className="flex-1 bg-[#121212] border border-[#303030] focus:border-[#3ea6ff] rounded-full px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none transition-colors disabled:opacity-50"
+                    />
+
+                    <button
+                      type="submit"
+                      disabled={!inputText.trim() || isSending || isBalanceInsufficient}
+                      className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white flex items-center justify-center transition-colors shrink-0 shadow-md"
+                      aria-label="Send message"
+                    >
+                      {isSending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Send className="h-3.5 w-3.5 ml-0.5" />
+                      )}
+                    </button>
                   </div>
 
-                  {/* Text Content */}
-                  <p className="text-zinc-200 break-words mt-0.5 text-xs font-normal">
-                    {msg.message}
-                  </p>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-400 px-1 pt-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 font-semibold text-amber-400">
+                        <span>🪙</span>
+                        <span>{currentBalance} coins</span>
+                      </span>
+                      {isHost ? (
+                        <span className="text-emerald-400 font-semibold">• Host (Free Chat)</span>
+                      ) : chatCost > 0 ? (
+                        <span className="text-zinc-500">• {chatCost} coins / msg</span>
+                      ) : (
+                        <span className="text-emerald-400">• Free Chat</span>
+                      )}
+                    </div>
+
+                    <span>{inputText.length}/300</span>
+                  </div>
+                </form>
+              )
+            ) : (
+              <div className="flex items-center justify-between p-2 rounded-2xl bg-[#121212] border border-[#272727]">
+                <span className="text-xs text-zinc-400">Sign in to participate in chat</span>
+                <Link
+                  href={`/login?redirect=/live/${streamId}`}
+                  className="px-3 py-1 bg-[#3ea6ff]/10 hover:bg-[#3ea6ff]/20 text-[#3ea6ff] border border-[#3ea6ff]/30 rounded-full text-xs font-semibold transition-colors"
+                >
+                  Sign In
+                </Link>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ===================================================================== */}
+      {/* TAB 2: 1-ON-1 PAID PRIVATE CHAT                                      */}
+      {/* ===================================================================== */}
+      {activeChatTab === 'private' && (
+        <div className="flex-1 flex flex-col min-h-0 bg-[#0c0c0c]">
+          {/* --------------------------------------------------------------- */}
+          {/* STREAMER EXPERIENCE: WhatsApp-Style Inbox                       */}
+          {/* --------------------------------------------------------------- */}
+          {isHost ? (
+            !selectedViewer ? (
+              /* LEVEL A: Streamer's Contact List (One person one-by-one) */
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* Search Bar for Viewers */}
+                <div className="p-2.5 bg-[#141414] border-b border-[#242424] shrink-0">
+                  <div className="relative">
+                    <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Search viewers..."
+                      value={viewerSearch}
+                      onChange={(e) => setViewerSearch(e.target.value)}
+                      className="w-full bg-[#1e1e1e] border border-[#2e2e2e] focus:border-purple-500 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                    />
+                  </div>
                 </div>
+
+                {/* Contacts List */}
+                <div className="flex-1 overflow-y-auto divide-y divide-[#1e1e1e]">
+                  {filteredConversations.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-purple-950/40 border border-purple-800/40 flex items-center justify-center text-purple-400">
+                        <MessageCircle className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">No Private Messages Yet</h4>
+                        <p className="text-[11px] text-zinc-500 mt-1 max-w-[220px]">
+                          When viewers pay coins to message you privately during the live stream, their 1-on-1 chats will appear here.
+                        </p>
+                      </div>
+                      <div className="px-3 py-1 bg-[#181818] border border-[#2a2a2a] rounded-full text-[10px] text-purple-300 font-mono">
+                        Viewers pay 🪙 {privateChatCost} coins / msg
+                      </div>
+                    </div>
+                  ) : (
+                    filteredConversations.map((conv) => {
+                      const userInitials = (conv.otherUser.display_name || conv.otherUser.username || 'U')
+                        .charAt(0)
+                        .toUpperCase()
+
+                      return (
+                        <div
+                          key={conv.otherUser.id}
+                          onClick={() => {
+                            setSelectedViewer(conv.otherUser)
+                            fetchPrivateChat()
+                          }}
+                          className="p-3 hover:bg-[#181818] cursor-pointer transition-colors flex items-center gap-3 group"
+                        >
+                          {/* Viewer Avatar */}
+                          <div className="relative shrink-0">
+                            <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800 border border-purple-500/30 flex items-center justify-center">
+                              {conv.otherUser.avatar_url ? (
+                                <img
+                                  src={conv.otherUser.avatar_url}
+                                  alt={conv.otherUser.username}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <span className="font-bold text-sm text-purple-300">{userInitials}</span>
+                              )}
+                            </div>
+                            {conv.unreadCount > 0 && (
+                              <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-black text-[9px] font-black rounded-full flex items-center justify-center animate-pulse">
+                                {conv.unreadCount}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Message Preview Snippet */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span className="font-bold text-xs text-white truncate group-hover:text-purple-300 transition-colors">
+                                {conv.otherUser.display_name || conv.otherUser.username}
+                              </span>
+                              <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                                {formatChatTime(conv.lastMessageAt)}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-zinc-400 truncate leading-relaxed">
+                              {conv.lastMessage}
+                            </p>
+
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[9px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.2 rounded-full font-bold">
+                                🪙 {conv.totalCoinsPaid} coins paid
+                              </span>
+                              <span className="text-[9px] text-zinc-600 font-mono">
+                                @{conv.otherUser.username}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* LEVEL B: Streamer's 1-on-1 Chat Thread with Selected Person */
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* 1-on-1 Header Bar with Back Button */}
+                <div className="px-3 py-2 bg-[#161616] border-b border-[#262626] flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedViewer(null)}
+                      className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors shrink-0"
+                      title="Back to all conversations"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+
+                    <div className="w-7 h-7 rounded-full overflow-hidden bg-zinc-800 border border-purple-500/40 shrink-0">
+                      {selectedViewer.avatar_url ? (
+                        <img
+                          src={selectedViewer.avatar_url}
+                          alt={selectedViewer.username}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center font-bold text-xs text-purple-300">
+                          {(selectedViewer.display_name || selectedViewer.username).charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs text-white truncate">
+                        {selectedViewer.display_name || selectedViewer.username}
+                      </div>
+                      <div className="text-[9px] text-zinc-400">@{selectedViewer.username}</div>
+                    </div>
+                  </div>
+
+                  <div className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold shrink-0">
+                    Host (Free Chat)
+                  </div>
+                </div>
+
+                {/* 1-on-1 Messages Thread */}
+                <div
+                  ref={privateScrollContainerRef}
+                  className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs text-zinc-200"
+                >
+                  {privateMessages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500 space-y-1">
+                      <MessageCircle className="h-8 w-8 text-zinc-700 stroke-1" />
+                      <p className="text-xs">No messages yet with this viewer.</p>
+                      <p className="text-[10px] text-zinc-600">Reply freely to their private chat inquiry.</p>
+                    </div>
+                  ) : (
+                    privateMessages.map((m) => {
+                      const isFromHost = m.sender_id === user.id
+                      return (
+                        <div
+                          key={m.id}
+                          className={`flex flex-col ${isFromHost ? 'items-end' : 'items-start'}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-2xl px-3 py-2 space-y-1 ${
+                              isFromHost
+                                ? 'bg-purple-600 text-white rounded-tr-sm shadow-md shadow-purple-900/20'
+                                : 'bg-[#1e1e1e] border border-[#2e2e2e] text-zinc-200 rounded-tl-sm'
+                            }`}
+                          >
+                            <p className="text-xs break-words leading-relaxed whitespace-pre-wrap">{m.message}</p>
+                            <div
+                              className={`flex items-center gap-1.5 text-[9px] ${
+                                isFromHost ? 'text-purple-200 justify-end' : 'text-zinc-500'
+                              }`}
+                            >
+                              <span>{formatChatTime(m.created_at)}</span>
+                              {!isFromHost && m.coins_paid > 0 && (
+                                <span className="text-amber-400 font-bold">• 🪙 {m.coins_paid} paid</span>
+                              )}
+                              {isFromHost && <span>• 👑 You (Host)</span>}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+
+                {/* Streamer Reply Bar (Free for streamer) */}
+                <form
+                  onSubmit={handleSendPrivateMessage}
+                  className="p-2.5 bg-[#161616] border-t border-[#262626] shrink-0 space-y-1.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      maxLength={500}
+                      placeholder={`Reply to @${selectedViewer.username}... (Free for Streamer)`}
+                      value={privateInputText}
+                      onChange={(e) => setPrivateInputText(e.target.value)}
+                      className="flex-1 bg-[#1e1e1e] border border-[#303030] focus:border-purple-500 rounded-full px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                    />
+
+                    <button
+                      type="submit"
+                      disabled={!privateInputText.trim() || isSendingPrivate}
+                      className="px-3.5 py-2 rounded-full bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white text-xs font-bold flex items-center gap-1 transition-colors shrink-0 shadow-md shadow-purple-600/20"
+                    >
+                      {isSendingPrivate ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <>
+                          <span>Send</span>
+                          <Send className="h-3 w-3" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1">
+                    <span className="text-emerald-400 font-semibold">👑 Broadcaster: Free chat (0 coins deducted)</span>
+                    <span>{privateInputText.length}/500</span>
+                  </div>
+                </form>
               </div>
             )
-          })
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Floating "Chat is paused" Pill when scrolled up */}
-      {isScrolledUp && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
-          <button
-            onClick={() => scrollToBottom(true)}
-            className="flex items-center gap-1.5 px-3 py-1 bg-zinc-800/95 hover:bg-zinc-700 text-white text-[11px] font-semibold rounded-full shadow-lg border border-[#3e3e3e] transition-all"
-          >
-            <span>Chat paused</span>
-            <ArrowDown className="h-3 w-3" />
-          </button>
-        </div>
-      )}
-
-      {/* Chat Error Banner */}
-      {chatError && (
-        <div className="px-3 py-2 bg-red-950/90 border-t border-red-500/30 text-red-300 text-xs flex items-center justify-between gap-2 animate-slide-up">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
-            <span className="text-[11px]">{chatError}</span>
-          </div>
-          <button onClick={() => setChatError(null)} className="text-red-400 hover:text-white">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* PAID SUPER EMOJIS TRAY (ALLOCATED BY ADMIN PANEL) */}
-      {user && userChatEnabled && showPaidEmojisTray && (
-        <div className="p-3 bg-[#161616] border-t border-amber-500/30 space-y-2 animate-slide-up">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Super Emojis (Paid Reaction Stickers)</span>
-            </span>
-            <span className="text-[10px] text-zinc-400">
-              Streamer receives {streamerPercent}%
-            </span>
-          </div>
-
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-            {paidEmojis.map((item) => {
-              const canAfford = isHost || currentBalance >= item.cost
-              return (
-                <button
-                  key={item.emoji}
-                  type="button"
-                  onClick={() => handleSendMessage(undefined, item)}
-                  disabled={!canAfford || isSending}
-                  className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${
-                    canAfford
-                      ? 'bg-[#1f1f1f] hover:bg-[#282828] border-zinc-700 hover:border-amber-500/50 hover:scale-105 active:scale-95'
-                      : 'bg-zinc-900/60 border-zinc-800 opacity-40 cursor-not-allowed'
-                  }`}
-                  title={isHost ? `${item.emoji} Free for Host` : `${item.emoji} costs ${item.cost} coins`}
-                >
-                  <span className="text-2xl select-none mb-1">{item.emoji}</span>
-                  <span className="text-[10px] font-bold text-amber-400 flex items-center gap-0.5">
-                    {isHost ? (
-                      <span className="text-[9px] text-emerald-400 font-bold">FREE</span>
-                    ) : (
-                      <>
-                        <span>🪙</span>
-                        <span>{item.cost}</span>
-                      </>
-                    )}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Bottom Input Area */}
-      <div className="p-3 bg-[#181818] border-t border-[#272727] shrink-0 space-y-2">
-        {user ? (
-          !userChatEnabled ? (
-            /* Chat Disabled for User by Admin */
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2.5">
-              <Lock className="h-4 w-4 shrink-0 text-red-400" />
-              <span>Your live chat privileges have been disabled by an administrator.</span>
-            </div>
           ) : (
-            <form onSubmit={(e) => handleSendMessage(e)} className="space-y-2">
-              <div className="flex items-center gap-2">
-                {/* Toggle Paid Super Emojis Shelf Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowPaidEmojisTray(!showPaidEmojisTray)}
-                  className={`p-2 rounded-full border transition-colors shrink-0 ${
-                    showPaidEmojisTray
-                      ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
-                      : 'bg-[#141414] hover:bg-[#242424] text-amber-400 border-[#303030]'
-                  }`}
-                  title="Send Super Emoji"
-                >
-                  <Sparkles className="h-4 w-4" />
-                </button>
-
-                <input
-                  type="text"
-                  maxLength={300}
-                  disabled={isBalanceInsufficient}
-                  placeholder={
-                    isBalanceInsufficient
-                      ? `Insufficient coins (${currentBalance}/${chatCost} coins needed)`
-                      : isHost
-                      ? 'Chat with your viewers (Free for Host)...'
-                      : 'Send a message or Super Emoji...'
-                  }
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  className="flex-1 bg-[#121212] border border-[#303030] focus:border-[#3ea6ff] rounded-full px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none transition-colors disabled:opacity-50"
-                />
-
-                <button
-                  type="submit"
-                  disabled={!inputText.trim() || isSending || isBalanceInsufficient}
-                  className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white flex items-center justify-center transition-colors shrink-0 shadow-md"
-                  aria-label="Send message"
-                >
-                  {isSending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5 ml-0.5" />
-                  )}
-                </button>
-              </div>
-
-              {/* Wallet and Character Stats Bar */}
-              <div className="flex items-center justify-between text-[10px] text-zinc-400 px-1 pt-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1 font-semibold text-amber-400">
-                    <span>🪙</span>
-                    <span>{currentBalance} coins</span>
-                  </span>
-                  {isHost ? (
-                    <span className="text-emerald-400 font-semibold">• Host (Free Chat)</span>
-                  ) : chatCost > 0 ? (
-                    <span className="text-zinc-500">• {chatCost} coins / msg</span>
-                  ) : (
-                    <span className="text-emerald-400">• Free Chat</span>
-                  )}
+            /* --------------------------------------------------------------- */
+            /* VIEWER EXPERIENCE: 1-on-1 Paid Private Chat with Host          */
+            /* --------------------------------------------------------------- */
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* Host Profile Banner & Cost */}
+              <div className="p-3 bg-gradient-to-r from-purple-950/40 to-zinc-900 border-b border-[#282828] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 border border-purple-500/40 shrink-0">
+                    {hostProfile?.avatar_url ? (
+                      <img
+                        src={hostProfile.avatar_url}
+                        alt="Host"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center font-bold text-xs text-purple-300">
+                        👑
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-white truncate">
+                        {hostProfile?.display_name || hostProfile?.username || 'Stream Host'}
+                      </span>
+                      <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 text-[9px] font-bold rounded-full">
+                        Host
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-zinc-400">1-on-1 Private Live Chat</p>
+                  </div>
                 </div>
 
-                <span>{inputText.length}/300</span>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-bold text-purple-300 font-mono">
+                    🪙 {privateChatCost} Coins
+                  </div>
+                  <div className="text-[9px] text-zinc-500">per message</div>
+                </div>
               </div>
-            </form>
-          )
-        ) : (
-          <div className="flex items-center justify-between p-2 rounded-2xl bg-[#121212] border border-[#272727]">
-            <span className="text-xs text-zinc-400">Sign in to participate in chat</span>
-            <Link
-              href={`/login?redirect=/live/${streamId}`}
-              className="px-3 py-1 bg-[#3ea6ff]/10 hover:bg-[#3ea6ff]/20 text-[#3ea6ff] border border-[#3ea6ff]/30 rounded-full text-xs font-semibold transition-colors"
-            >
-              Sign In
-            </Link>
-          </div>
-        )}
-      </div>
+
+              {/* Messages Thread */}
+              <div
+                ref={privateScrollContainerRef}
+                className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs text-zinc-200"
+              >
+                {privateMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500 space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-950/30 border border-purple-800/30 flex items-center justify-center text-purple-400">
+                      <Lock className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Direct 1-on-1 Chat with Host</h4>
+                      <p className="text-[11px] text-zinc-400 mt-1 max-w-[240px]">
+                        Send a private paid message directly to the streamer. The host will see your message in their private inbox.
+                      </p>
+                    </div>
+                    <div className="px-3 py-1 bg-[#181818] border border-[#2a2a2a] rounded-full text-[10px] text-purple-300 font-mono">
+                      🪙 {privateChatCost} coins per message • {privateChatStreamerPercent}% goes to host
+                    </div>
+                  </div>
+                ) : (
+                  privateMessages.map((m) => {
+                    const isFromMe = m.sender_id === user?.id
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex flex-col ${isFromMe ? 'items-end' : 'items-start'}`}
+                      >
+                        <div
+                          className={`max-w-[85%] rounded-2xl px-3 py-2 space-y-1 ${
+                            isFromMe
+                              ? 'bg-purple-600 text-white rounded-tr-sm shadow-md shadow-purple-900/20'
+                              : 'bg-[#1e1e1e] border border-amber-500/30 text-zinc-100 rounded-tl-sm'
+                          }`}
+                        >
+                          <p className="text-xs break-words leading-relaxed whitespace-pre-wrap">{m.message}</p>
+                          <div
+                            className={`flex items-center gap-1.5 text-[9px] ${
+                              isFromMe ? 'text-purple-200 justify-end' : 'text-amber-400'
+                            }`}
+                          >
+                            <span>{formatChatTime(m.created_at)}</span>
+                            {isFromMe && m.coins_paid > 0 && (
+                              <span>• 🪙 {m.coins_paid} coins paid</span>
+                            )}
+                            {!isFromMe && <span className="font-bold">• 👑 Host</span>}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Private Chat Error Notice */}
+              {privateChatError && (
+                <div className="mx-3 my-1 p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                    <span>{privateChatError}</span>
+                  </div>
+                  <button onClick={() => setPrivateChatError(null)} className="text-red-400 hover:text-white">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Bottom Viewer Private Message Input Bar */}
+              <div className="p-3 bg-[#181818] border-t border-[#272727] shrink-0 space-y-2">
+                {user ? (
+                  isPrivateBalanceInsufficient ? (
+                    <div className="p-3 rounded-2xl bg-purple-950/30 border border-purple-800/40 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>🪙 Insufficient Coins</span>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                          Need {privateChatCost} coins (Your balance: {currentBalance} coins)
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsTopUpModalOpen(true)}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-extrabold text-xs rounded-xl shadow-md transition-all shrink-0 cursor-pointer"
+                      >
+                        Top Up Coins
+                      </button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleSendPrivateMessage} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={500}
+                          placeholder={`Private message to host (🪙 ${privateChatCost} coins)...`}
+                          value={privateInputText}
+                          onChange={(e) => setPrivateInputText(e.target.value)}
+                          className="flex-1 bg-[#121212] border border-purple-500/40 focus:border-purple-400 rounded-full px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none transition-colors"
+                        />
+
+                        <button
+                          type="submit"
+                          disabled={!privateInputText.trim() || isSendingPrivate}
+                          className="px-3.5 py-2 rounded-full bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white text-xs font-bold flex items-center gap-1 transition-colors shrink-0 shadow-md shadow-purple-600/30"
+                        >
+                          {isSendingPrivate ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <span>Send</span>
+                              <Send className="h-3 w-3" />
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-zinc-400 px-1 pt-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-amber-400 flex items-center gap-1">
+                            <span>🪙</span>
+                            <span>{currentBalance} coins</span>
+                          </span>
+                          <span className="text-purple-300 font-medium">
+                            • Costs {privateChatCost} coins / msg
+                          </span>
+                        </div>
+                        <span>{privateInputText.length}/500</span>
+                      </div>
+                    </form>
+                  )
+                ) : (
+                  <div className="flex items-center justify-between p-2 rounded-2xl bg-[#121212] border border-[#272727]">
+                    <span className="text-xs text-zinc-400">Sign in to chat privately with host</span>
+                    <Link
+                      href={`/login?redirect=/live/${streamId}`}
+                      className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-full text-xs font-semibold transition-colors"
+                    >
+                      Sign In
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Coin Top-Up Modal Integration */}
+      <TopUpModal
+        isOpen={isTopUpModalOpen}
+        onClose={() => setIsTopUpModalOpen(false)}
+        onSuccess={() => {
+          refreshProfile?.()
+          fetchPrivateChat()
+        }}
+      />
     </div>
   )
 }

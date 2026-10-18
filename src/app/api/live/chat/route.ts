@@ -42,6 +42,8 @@ export async function GET(request: NextRequest) {
     }
     const chatCost = parseInt(settingsMap['chat_cost_per_message'] || '0', 10)
     const streamerPercent = parseInt(settingsMap['streamer_revenue_percent'] || '70', 10)
+    const privateChatCost = parseInt(settingsMap['private_chat_cost_per_message'] || '10', 10)
+    const privateChatStreamerPercent = parseInt(settingsMap['private_chat_streamer_revenue_percent'] || '80', 10)
 
     let paidEmojis = DEFAULT_PAID_EMOJIS
     if (settingsMap['paid_chat_emojis']) {
@@ -85,6 +87,8 @@ export async function GET(request: NextRequest) {
         economics: {
           chatCost,
           streamerPercent,
+          privateChatCost,
+          privateChatStreamerPercent,
           userCoins,
           userChatEnabled,
           paidEmojis,
@@ -119,8 +123,15 @@ export async function GET(request: NextRequest) {
       messages = primaryQuery.data || []
     }
 
+    // Filter out private chat messages from public chat feed
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const formattedMessages = messages.map((m: any) => ({
+    const publicMessages = messages.filter((m: any) => {
+      const emoji = m.paid_emoji
+      return !emoji || !String(emoji).startsWith('__private:')
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const formattedMessages = publicMessages.map((m: any) => ({
       ...m,
       paidEmoji:
         m.paid_emoji && typeof m.paid_emoji === 'string' && m.paid_emoji.trim().length > 0
@@ -134,6 +145,8 @@ export async function GET(request: NextRequest) {
       economics: {
         chatCost,
         streamerPercent,
+        privateChatCost,
+        privateChatStreamerPercent,
         userCoins,
         userChatEnabled,
         paidEmojis,

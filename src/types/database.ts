@@ -89,6 +89,19 @@ export interface TopupRequestRow {
   profiles?: ProfileRow | null
 }
 
+export interface LivePrivateChatMessageRow {
+  id: string
+  stream_id: string
+  sender_id: string
+  recipient_id: string
+  message: string
+  coins_paid: number
+  is_read: boolean
+  created_at: string
+  sender?: ProfileRow | null
+  recipient?: ProfileRow | null
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -285,6 +298,52 @@ export interface Database {
           {
             foreignKeyName: "topup_requests_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      live_private_chat_messages: {
+        Row: LivePrivateChatMessageRow
+        Insert: {
+          id?: string
+          stream_id: string
+          sender_id: string
+          recipient_id: string
+          message: string
+          coins_paid?: number
+          is_read?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          stream_id?: string
+          sender_id?: string
+          recipient_id?: string
+          message?: string
+          coins_paid?: number
+          is_read?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_private_chat_messages_stream_id_fkey"
+            columns: ["stream_id"]
+            isOneToOne: false
+            referencedRelation: "live_streams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_chat_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_chat_messages_recipient_id_fkey"
+            columns: ["recipient_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
