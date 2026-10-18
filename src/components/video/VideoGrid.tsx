@@ -2,62 +2,65 @@
 
 import { cn } from '@/lib/utils'
 import { VideoCard } from './VideoCard'
-import { VideoCardSkeleton } from '@/components/ui/Skeleton'
+import { VideoGridSkeleton } from './VideoGridSkeleton'
 import type { Video } from '@/types'
+import Link from 'next/link'
+import { Video as VideoIcon, Upload } from 'lucide-react'
 
 interface VideoGridProps {
   videos: Video[]
   isLoading?: boolean
   emptyMessage?: string
   className?: string
+  showVisibilityBadge?: boolean
 }
 
-export function VideoGrid({ videos, isLoading, emptyMessage = 'No videos found', className }: VideoGridProps) {
+export function VideoGrid({
+  videos,
+  isLoading,
+  emptyMessage = 'No videos found',
+  className,
+  showVisibilityBadge = false,
+}: VideoGridProps) {
   if (isLoading) {
-    return (
-      <div className={cn('grid gap-4', className)}>
-        {[...Array(8)].map((_, i) => (
-          <VideoCardSkeleton key={i} />
-        ))}
-      </div>
-    )
+    return <VideoGridSkeleton />
   }
 
   if (videos.length === 0) {
     return (
-      <div className={cn('col-span-full py-12 text-center', className)}>
-        <div className="max-w-md mx-auto px-4">
-          <svg className="mx-auto h-12 w-12 text-gray-700 mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <polygon points="23 7 16 12 23 17 23 7" />
-            <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-          </svg>
-          <h3 className="text-lg font-medium text-gray-300 mb-2">No videos yet</h3>
-          <p className="text-gray-500 mb-6">{emptyMessage}</p>
-          <a href="/upload" className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors touch-target">
-            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            Upload your first video
-          </a>
+      <div className={cn('col-span-full py-16 text-center', className)}>
+        <div className="max-w-md mx-auto px-4 flex flex-col items-center">
+          <div className="w-16 h-16 rounded-2xl bg-gray-900 border border-gray-800 flex items-center justify-center text-gray-500 mb-4 shadow-inner">
+            <VideoIcon className="h-8 w-8" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-200 mb-1">No videos yet</h3>
+          <p className="text-sm text-gray-400 mb-6 max-w-sm">{emptyMessage}</p>
+          <Link
+            href="/upload"
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl transition-colors shadow-md shadow-indigo-600/20"
+          >
+            <Upload className="h-4 w-4" />
+            <span>Upload a Video</span>
+          </Link>
         </div>
       </div>
     )
   }
 
   return (
-    <div className={cn(
-      'grid gap-4',
-      'grid-cols-2',
-      'sm:grid-cols-2',
-      'md:grid-cols-3',
-      'lg:grid-cols-4',
-      'xl:grid-cols-5',
-      className
-    )}>
+    <div
+      className={cn(
+        'grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
+        className
+      )}
+    >
       {videos.map((video, index) => (
-        <VideoCard key={video.id} video={video} priority={index < 4} />
+        <VideoCard
+          key={video.id}
+          video={video}
+          priority={index < 4}
+          showVisibilityBadge={showVisibilityBadge}
+        />
       ))}
     </div>
   )

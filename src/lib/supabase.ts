@@ -1,40 +1,40 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
-}
-
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey)
-
-export const createServerClient = () => {
-  return createClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  )
-}
+import { createClient as createBrowserClientInstance } from './supabase/client'
 
 export const STORAGE_BUCKETS = {
   VIDEOS: 'videos',
   THUMBNAILS: 'thumbnails',
 } as const
 
+// Client-side singleton for browser usage
+let browserClient: ReturnType<typeof createBrowserClientInstance> | null = null
+
+export function getSupabaseBrowserClient() {
+  if (typeof window === 'undefined') {
+    return createBrowserClientInstance()
+  }
+  if (!browserClient) {
+    browserClient = createBrowserClientInstance()
+  }
+  return browserClient
+}
+
+export const supabase = new Proxy({} as ReturnType<typeof createBrowserClientInstance>, {
+  get(_target, prop) {
+    const client = getSupabaseBrowserClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (client as any)[prop]
+  },
+})
+
 export async function createSignedUploadUrl(bucket: string, path: string, expiresIn = 3600) {
-  const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path)
+  const client = getSupabaseBrowserClient()
+  const { data, error } = await client.storage.from(bucket).createSignedUploadUrl(path)
   if (error) throw new Error(error.message)
   return data.signedUrl
 }
 
-export async function getPublicUrl(bucket: string, path: string) {
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+export function getPublicUrl(bucket: string, path: string) {
+  const client = getSupabaseBrowserClient()
+  const { data } = client.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
 }

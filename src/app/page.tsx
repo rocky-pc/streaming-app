@@ -1,46 +1,41 @@
 import { Metadata } from 'next'
 import { getVideos } from '@/lib/api'
-import type { Video, PaginatedResponse } from '@/types'
-import { Suspense } from 'react'
+import { getPublicLiveStreams } from '@/lib/live'
 import { HomePageClient } from './HomePageClient'
-import { SearchBarClient } from './SearchBarClient'
+import { Suspense } from 'react'
 import { VideoGridSkeleton } from '@/components/video/VideoGridSkeleton'
 
 export const dynamic = 'force-dynamic'
 
-export async function generateMetadata(): Promise<Metadata> {
-  return {
-    title: 'Home',
-  }
+export const metadata: Metadata = {
+  title: 'Home',
+  description: 'Watch, share, and discover public videos and live streams uploaded by the community.',
 }
 
-async function VideoList() {
-  const result: PaginatedResponse<Video> = await getVideos({ query: '', page: 1, limit: 20 })
-
-  return (
-    <HomePageClient
-      initialVideos={result.data}
-      initialHasMore={result.hasMore}
-      initialTotal={result.total}
-    />
-  )
+interface PageProps {
+  searchParams: Promise<{ q?: string }>
 }
 
-export default function HomePage() {
+export default async function HomePage({ searchParams }: PageProps) {
+  const resolvedParams = await searchParams
+  const query = resolvedParams?.q || ''
+
+  const [initialResult, liveStreams] = await Promise.all([
+    getVideos({ query, page: 1, limit: 12 }),
+    getPublicLiveStreams(6),
+  ])
+
   return (
-    <div className="min-h-screen bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 py-6 pb-28">
-        <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1">Videos</h1>
-          <p className="text-gray-400 text-sm">Discover and watch amazing content</p>
-        </div>
-
-        <div className="mb-6 sticky top-16 z-30 bg-gray-950/80 backdrop-blur-sm px-4 -mx-4 py-4 border-b border-gray-800">
-          <SearchBarClient />
-        </div>
-
+    <div className="min-h-screen bg-[#0f0f0f]">
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <Suspense fallback={<VideoGridSkeleton />}>
-          <VideoList />
+          <HomePageClient
+            initialVideos={initialResult.data}
+            initialHasMore={initialResult.hasMore}
+            initialTotal={initialResult.total}
+            initialQuery={query}
+            initialLiveStreams={liveStreams}
+          />
         </Suspense>
       </div>
     </div>
