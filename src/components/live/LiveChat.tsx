@@ -1101,7 +1101,7 @@ export function LiveChat({
                     </div>
                   ) : (
                     privateMessages.map((m) => {
-                      const isFromHost = m.sender_id === user.id
+                      const isFromHost = Boolean(user && m.sender_id === user.id)
                       return (
                         <div
                           key={m.id}

@@ -125,7 +125,12 @@ export async function GET(request: NextRequest) {
         .order('created_at', { ascending: true })
 
       if (!res.error && res.data) {
-        return res.data as PrivateMessageItem[]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (res.data as any[]).map((row: any) => ({
+          ...row,
+          sender: Array.isArray(row.sender) ? (row.sender[0] || null) : (row.sender || null),
+          recipient: Array.isArray(row.recipient) ? (row.recipient[0] || null) : (row.recipient || null),
+        })) as PrivateMessageItem[]
       }
 
       // Fallback: Query live_chat_messages where paid_emoji starts with __private:
@@ -470,7 +475,13 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (!insertRes.error && insertRes.data) {
-      insertedMessage = insertRes.data as PrivateMessageItem
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawData = insertRes.data as any
+      insertedMessage = {
+        ...rawData,
+        sender: Array.isArray(rawData.sender) ? (rawData.sender[0] || null) : (rawData.sender || null),
+        recipient: Array.isArray(rawData.recipient) ? (rawData.recipient[0] || null) : (rawData.recipient || null),
+      } as PrivateMessageItem
     } else {
       // Fallback to live_chat_messages with __private prefix
       const fallbackInsert = await supabaseService
