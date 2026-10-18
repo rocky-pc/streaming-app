@@ -44,6 +44,9 @@ import {
   Copy,
   QrCode,
   XCircle,
+  Banknote,
+  IndianRupee,
+  ArrowDownLeft,
 } from 'lucide-react'
 import { formatFileSize, formatRelativeTime, formatDuration, formatDate } from '@/lib/utils'
 
@@ -204,7 +207,34 @@ interface AdminUpiSettings {
   packages?: TopUpPackageItem[]
 }
 
-type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'topups' | 'settings'
+export interface AdminWithdrawalRequest {
+  id: string
+  user_id: string
+  coins: number
+  amount_inr: number
+  upi_id: string
+  upi_name?: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  admin_notes: string | null
+  created_at: string
+  updated_at?: string
+  profiles?: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+    coin_balance: number
+  } | null
+}
+
+export interface AdminWithdrawalSettings {
+  streamer_payout_rate_coins: number
+  streamer_payout_rate_inr: number
+  min_withdrawal_inr: number
+  instructions?: string
+}
+
+type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'topups' | 'withdrawals' | 'settings'
 
 export default function AdminPortalClient() {
   // Authentication State
@@ -261,6 +291,34 @@ export default function AdminPortalClient() {
   const [decliningRequest, setDecliningRequest] = useState<AdminTopupRequest | null>(null)
   const [declineReasonInput, setDeclineReasonInput] = useState('Payment verification failed / Invalid UTR')
   const [copiedUtr, setCopiedUtr] = useState<string | null>(null)
+
+  // Streamer Withdrawals & Payouts State
+  const [withdrawalRequests, setWithdrawalRequests] = useState<AdminWithdrawalRequest[]>([])
+  const [withdrawalSettings, setWithdrawalSettings] = useState<AdminWithdrawalSettings>({
+    streamer_payout_rate_coins: 100,
+    streamer_payout_rate_inr: 20,
+    min_withdrawal_inr: 100,
+  })
+  const [withdrawalForm, setWithdrawalForm] = useState<AdminWithdrawalSettings>({
+    streamer_payout_rate_coins: 100,
+    streamer_payout_rate_inr: 20,
+    min_withdrawal_inr: 100,
+  })
+  const [isSavingWithdrawalSettings, setIsSavingWithdrawalSettings] = useState(false)
+  const [withdrawalFilter, setWithdrawalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [withdrawalSearch, setWithdrawalSearch] = useState('')
+  const [processingWithdrawalId, setProcessingWithdrawalId] = useState<string | null>(null)
+  const [approvingWithdrawal, setApprovingWithdrawal] = useState<AdminWithdrawalRequest | null>(null)
+  const [approvalUtrInput, setApprovalUtrInput] = useState('')
+  const [decliningWithdrawal, setDecliningWithdrawal] = useState<AdminWithdrawalRequest | null>(null)
+  const [withdrawalDeclineReasonInput, setWithdrawalDeclineReasonInput] = useState('Invalid UPI ID or payment declined by bank')
+  const [copiedUpi, setCopiedUpi] = useState<string | null>(null)
+
+  const handleCopyUpiId = (upi: string) => {
+    navigator.clipboard.writeText(upi)
+    setCopiedUpi(upi)
+    setTimeout(() => setCopiedUpi(null), 2000)
+  }
 
   const [isLoadingData, setIsLoadingData] = useState(false)
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -453,6 +511,17 @@ export default function AdminPortalClient() {
           }
         }
       }
+
+      // 8. Fetch Withdrawals & Streamer Payout Settings
+      const withdrawalsRes = await fetch('/api/admin/withdrawals')
+      if (withdrawalsRes.ok) {
+        const withdrawalsData = await withdrawalsRes.json()
+        setWithdrawalRequests(withdrawalsData.requests || [])
+        if (withdrawalsData.settings) {
+          setWithdrawalSettings(withdrawalsData.settings)
+          setWithdrawalForm(withdrawalsData.settings)
+        }
+      }
     } catch (err) {
       console.error('Error fetching admin data:', err)
       setActionNotice({ type: 'error', message: 'Failed to refresh telemetry' })
@@ -500,6 +569,27 @@ export default function AdminPortalClient() {
       }
     }
     const interval = setInterval(pollTopups, 3500)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, activeTab])
+
+  // Live real-time withdrawal requests polling for Admin without requiring page refresh
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'withdrawals') return
+    const pollWithdrawals = async () => {
+      try {
+        const res = await fetch('/api/admin/withdrawals')
+        if (res.ok) {
+          const data = await res.json()
+          setWithdrawalRequests(data.requests || [])
+          if (data.settings) {
+            setWithdrawalSettings(data.settings)
+          }
+        }
+      } catch {
+        // silent polling error
+      }
+    }
+    const interval = setInterval(pollWithdrawals, 3500)
     return () => clearInterval(interval)
   }, [isAuthenticated, activeTab])
 
@@ -810,6 +900,126 @@ export default function AdminPortalClient() {
   }
 
   // -------------------------------------------------------------
+  // STREAMER WITHDRAWAL HANDLERS (REQUEST, APPROVAL, DECLINE)
+  // -------------------------------------------------------------
+  const handleSaveWithdrawalSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setIsSavingWithdrawalSettings(true)
+    try {
+      const res = await fetch('/api/admin/withdrawals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_settings',
+          streamer_payout_rate_coins: Number(withdrawalForm.streamer_payout_rate_coins),
+          streamer_payout_rate_inr: Number(withdrawalForm.streamer_payout_rate_inr),
+          min_withdrawal_inr: Number(withdrawalForm.min_withdrawal_inr),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setWithdrawalSettings(withdrawalForm)
+        setActionNotice({
+          type: 'success',
+          message:
+            data.message ||
+            `Payout rate saved! ${withdrawalForm.streamer_payout_rate_coins} Coins = ₹${withdrawalForm.streamer_payout_rate_inr} INR (Min: ₹${withdrawalForm.min_withdrawal_inr})`,
+        })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to save payout settings' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to communicate with server' })
+    } finally {
+      setIsSavingWithdrawalSettings(false)
+    }
+  }
+
+  const handleApproveWithdrawal = async (requestId: string, utr?: string) => {
+    setProcessingWithdrawalId(requestId)
+    try {
+      const res = await fetch('/api/admin/withdrawals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'approve',
+          requestId,
+          utr: utr?.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setActionNotice({
+          type: 'success',
+          message: data.message || 'Withdrawal approved and marked as paid via UPI!',
+        })
+        setWithdrawalRequests((prev) =>
+          prev.map((r) =>
+            r.id === requestId
+              ? {
+                  ...r,
+                  status: 'approved',
+                  admin_notes: utr?.trim() ? `Paid via UPI (UTR: ${utr.trim()})` : 'Paid by Admin via UPI',
+                }
+              : r
+          )
+        )
+        setApprovingWithdrawal(null)
+        setApprovalUtrInput('')
+        loadDashboardData()
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to approve withdrawal' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Network error approving withdrawal' })
+    } finally {
+      setProcessingWithdrawalId(null)
+    }
+  }
+
+  const handleDeclineWithdrawal = async (requestId: string, reason?: string) => {
+    setProcessingWithdrawalId(requestId)
+    try {
+      const declineReason = reason?.trim() || 'Declined by admin: UPI details incorrect or payment failed.'
+      const res = await fetch('/api/admin/withdrawals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'decline',
+          requestId,
+          reason: declineReason,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setActionNotice({
+          type: 'success',
+          message: data.message || 'Withdrawal request declined and coins refunded to user wallet.',
+        })
+        setWithdrawalRequests((prev) =>
+          prev.map((r) =>
+            r.id === requestId
+              ? {
+                  ...r,
+                  status: 'rejected',
+                  admin_notes: declineReason,
+                }
+              : r
+          )
+        )
+        setDecliningWithdrawal(null)
+        loadDashboardData()
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to decline withdrawal' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Network error declining withdrawal' })
+    } finally {
+      setProcessingWithdrawalId(null)
+    }
+  }
+
+  // -------------------------------------------------------------
   // PAID EMOJIS (SUPER STICKERS) MANAGEMENT HANDLERS
   // -------------------------------------------------------------
   const handleUpdateEmojiCost = (emojiChar: string, newCost: number) => {
@@ -1095,6 +1305,30 @@ export default function AdminPortalClient() {
   const totalTopupCoins = topupRequests
     .filter((r) => r.status === 'approved')
     .reduce((acc, r) => acc + (r.coins || 0), 0)
+
+  const pendingWithdrawalsCount = withdrawalRequests.filter((r) => r.status === 'pending').length
+  const pendingWithdrawalsInr = withdrawalRequests
+    .filter((r) => r.status === 'pending')
+    .reduce((acc, r) => acc + (Number(r.amount_inr) || 0), 0)
+  const totalWithdrawalInr = withdrawalRequests
+    .filter((r) => r.status === 'approved')
+    .reduce((acc, r) => acc + (Number(r.amount_inr) || 0), 0)
+  const totalWithdrawalCoins = withdrawalRequests
+    .filter((r) => r.status === 'approved')
+    .reduce((acc, r) => acc + (r.coins || 0), 0)
+
+  const filteredWithdrawals = withdrawalRequests.filter((r) => {
+    if (withdrawalFilter !== 'all' && r.status !== withdrawalFilter) return false
+    if (withdrawalSearch) {
+      const q = withdrawalSearch.toLowerCase()
+      const upiMatch = r.upi_id?.toLowerCase().includes(q)
+      const nameMatch = r.upi_name?.toLowerCase().includes(q)
+      const userMatch = r.profiles?.username?.toLowerCase().includes(q) || false
+      const notesMatch = r.admin_notes?.toLowerCase().includes(q) || false
+      return upiMatch || nameMatch || userMatch || notesMatch
+    }
+    return true
+  })
 
   // Loading initial state
   if (isAuthenticated === null) {
@@ -1418,6 +1652,26 @@ export default function AdminPortalClient() {
               </span>
             ) : (
               <span className="text-xs text-zinc-400 font-normal">({topupRequests.length})</span>
+            )}
+          </button>
+
+          {/* Streamer Withdrawals / Payouts Tab */}
+          <button
+            onClick={() => setActiveTab('withdrawals')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              activeTab === 'withdrawals'
+                ? 'bg-red-600 text-white shadow-lg shadow-red-600/25'
+                : 'text-zinc-400 hover:text-white hover:bg-[#1f1f1f]'
+            }`}
+          >
+            <Banknote className="h-4 w-4" />
+            <span>Withdrawals</span>
+            {pendingWithdrawalsCount > 0 ? (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-400 text-black font-extrabold animate-pulse">
+                {pendingWithdrawalsCount}
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-400 font-normal">({withdrawalRequests.length})</span>
             )}
           </button>
 
@@ -3338,7 +3592,606 @@ export default function AdminPortalClient() {
             )}
           </div>
         )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 8: STREAMER WITHDRAWALS & PAYOUTS */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'withdrawals' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Top KPI Metrics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Pending Payouts
+                  </span>
+                  <span className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <Clock className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-amber-400">{pendingWithdrawalsCount}</span>
+                  <span className="text-xs text-zinc-400 font-semibold">
+                    (₹{pendingWithdrawalsInr.toFixed(2)})
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">Awaiting admin manual UPI transfer</p>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Total Paid Out (INR)
+                  </span>
+                  <span className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                    <IndianRupee className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-emerald-400">₹{totalWithdrawalInr.toFixed(2)}</span>
+                  <span className="text-xs text-zinc-500">transferred</span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">Verified via UPI Reference / UTR</p>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Coins Redeemed
+                  </span>
+                  <span className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
+                    <Coins className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-white">🪙 {totalWithdrawalCoins.toLocaleString()}</span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">Total coins withdrawn by streamers</p>
+              </div>
+
+              <div className="bg-[#181818] border border-[#272727] p-5 rounded-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Conversion Rate
+                  </span>
+                  <span className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+                    <Banknote className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-lg font-black text-white">
+                    {withdrawalSettings.streamer_payout_rate_coins} Coins = ₹{withdrawalSettings.streamer_payout_rate_inr}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">
+                  Min withdrawal: <strong className="text-white">₹{withdrawalSettings.min_withdrawal_inr}</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Payout Rate & Minimum Withdrawal Configuration Form (Editable by Admin) */}
+            <form
+              onSubmit={handleSaveWithdrawalSettings}
+              className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-4"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#272727]">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Banknote className="h-5 w-5 text-emerald-400" />
+                    <span>Streamer Earnings Payout Configuration</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Configure the coin to INR exchange rate (e.g. 100 Coins = 20 INR) and minimum withdrawal amount required for cash-out requests.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingWithdrawalSettings}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 flex items-center justify-center gap-2 self-start sm:self-auto cursor-pointer"
+                >
+                  {isSavingWithdrawalSettings ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Saving Payout Rate...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Save Payout Settings</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <Coins className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Coins Equivalent Unit</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={withdrawalForm.streamer_payout_rate_coins}
+                    onChange={(e) =>
+                      setWithdrawalForm((prev) => ({
+                        ...prev,
+                        streamer_payout_rate_coins: Math.max(1, parseInt(e.target.value, 10) || 1),
+                      }))
+                    }
+                    className="w-full bg-[#121212] border border-[#2c2c2c] focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+                    placeholder="100"
+                  />
+                  <p className="text-[10px] text-zinc-500">e.g. 100 coins</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <IndianRupee className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Payout Amount (INR ₹)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    step="0.1"
+                    value={withdrawalForm.streamer_payout_rate_inr}
+                    onChange={(e) =>
+                      setWithdrawalForm((prev) => ({
+                        ...prev,
+                        streamer_payout_rate_inr: Math.max(0.1, parseFloat(e.target.value) || 1),
+                      }))
+                    }
+                    className="w-full bg-[#121212] border border-[#2c2c2c] focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+                    placeholder="20"
+                  />
+                  <p className="text-[10px] text-zinc-500">e.g. 20 INR (giving 100 coins = 20 INR)</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <CreditCard className="h-3.5 w-3.5 text-blue-400" />
+                    <span>Minimum Withdrawal (₹ INR)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={withdrawalForm.min_withdrawal_inr}
+                    onChange={(e) =>
+                      setWithdrawalForm((prev) => ({
+                        ...prev,
+                        min_withdrawal_inr: Math.max(1, parseFloat(e.target.value) || 1),
+                      }))
+                    }
+                    className="w-full bg-[#121212] border border-[#2c2c2c] focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+                    placeholder="100"
+                  />
+                  <p className="text-[10px] text-zinc-500">e.g. ₹100 minimum threshold</p>
+                </div>
+              </div>
+
+              {/* Conversion Calculator Formula Box */}
+              <div className="p-3 rounded-xl bg-[#121212] border border-emerald-500/20 text-xs text-zinc-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1 rounded-md bg-emerald-500/10 text-emerald-400 font-bold">Formula</span>
+                  <span>
+                    <strong>{withdrawalForm.streamer_payout_rate_coins} Coins</strong> = <strong className="text-emerald-400">₹{withdrawalForm.streamer_payout_rate_inr} INR</strong>
+                    {' '}(1 Coin = ₹{(withdrawalForm.streamer_payout_rate_inr / (withdrawalForm.streamer_payout_rate_coins || 1)).toFixed(2)} INR)
+                  </span>
+                </div>
+                <div className="text-[11px] text-zinc-400">
+                  Min Coins Needed: <strong className="text-white font-mono">{Math.ceil((withdrawalForm.min_withdrawal_inr * withdrawalForm.streamer_payout_rate_coins) / (withdrawalForm.streamer_payout_rate_inr || 1))} Coins</strong>
+                </div>
+              </div>
+            </form>
+
+            {/* Filters & Search Toolbar */}
+            <div className="bg-[#181818] border border-[#272727] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2 w-full sm:w-auto flex-1 max-w-md">
+                <div className="relative w-full">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by username, UPI ID, or payee name..."
+                    value={withdrawalSearch}
+                    onChange={(e) => setWithdrawalSearch(e.target.value)}
+                    className="w-full bg-[#121212] border border-[#2c2c2c] text-xs text-zinc-200 pl-9 pr-4 py-2 rounded-xl focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <select
+                  value={withdrawalFilter}
+                  onChange={(e) =>
+                    setWithdrawalFilter(e.target.value as 'all' | 'pending' | 'approved' | 'rejected')
+                  }
+                  className="bg-[#121212] border border-[#2c2c2c] text-xs text-zinc-200 rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="all">All Statuses ({withdrawalRequests.length})</option>
+                  <option value="pending">Pending ({pendingWithdrawalsCount})</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Declined</option>
+                </select>
+              </div>
+
+              <div className="text-xs text-zinc-400 flex items-center gap-2">
+                <span>Matching Requests: <strong className="text-white">{filteredWithdrawals.length}</strong></span>
+              </div>
+            </div>
+
+            {/* Withdrawal Requests Table */}
+            {filteredWithdrawals.length === 0 ? (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl p-12 text-center text-zinc-500 space-y-2">
+                <Banknote className="h-8 w-8 mx-auto text-zinc-600 mb-2" />
+                <p className="text-sm font-semibold text-zinc-400">No withdrawal requests found</p>
+                <p className="text-xs">Streamer payout requests with their UPI IDs will appear here for review and manual transfer</p>
+              </div>
+            ) : (
+              <div className="bg-[#181818] border border-[#272727] rounded-2xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#202020] text-zinc-400 uppercase tracking-wider text-[11px] border-b border-[#272727]">
+                      <tr>
+                        <th className="py-3 px-4">Streamer</th>
+                        <th className="py-3 px-4">Payout Amount (INR)</th>
+                        <th className="py-3 px-4">Coins Deducted</th>
+                        <th className="py-3 px-4">Streamer UPI ID</th>
+                        <th className="py-3 px-4">Requested Date</th>
+                        <th className="py-3 px-4 text-center">Status</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#222]">
+                      {filteredWithdrawals.map((r) => (
+                        <tr key={r.id} className="hover:bg-[#1f1f1f]/50 transition-colors">
+                          {/* Streamer Info */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-3">
+                              {r.profiles?.avatar_url ? (
+                                <img
+                                  src={r.profiles.avatar_url}
+                                  alt={r.profiles.username}
+                                  className="w-8 h-8 rounded-full object-cover ring-1 ring-white/10"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-300 font-bold flex items-center justify-center text-xs">
+                                  {(r.profiles?.username || 'U').charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-white flex items-center gap-1.5">
+                                  <span>{r.profiles?.display_name || r.profiles?.username || 'Streamer'}</span>
+                                  {r.profiles?.username && (
+                                    <Link
+                                      href={`/profile/${r.user_id}`}
+                                      target="_blank"
+                                      className="text-zinc-500 hover:text-white"
+                                      title="View Profile"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                    </Link>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-zinc-400">
+                                  <span>@{r.profiles?.username || 'user'}</span>
+                                  <span>•</span>
+                                  <span className="text-amber-400 font-bold">
+                                    🪙 {r.profiles?.coin_balance ?? 0} current bal
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Payout Amount INR */}
+                          <td className="py-3.5 px-4">
+                            <div className="font-black text-emerald-400 text-sm flex items-center gap-0.5">
+                              <span>₹{r.amount_inr}</span>
+                            </div>
+                            <span className="text-[10px] text-zinc-500">to transfer manually</span>
+                          </td>
+
+                          {/* Coins Deducted */}
+                          <td className="py-3.5 px-4 font-mono font-bold text-zinc-300">
+                            🪙 {r.coins}
+                          </td>
+
+                          {/* Streamer UPI ID with 1-click Copy */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs bg-[#121212] px-2.5 py-1 rounded-lg border border-[#2c2c2c] text-white select-all">
+                                {r.upi_id}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyUpiId(r.upi_id)}
+                                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                  copiedUpi === r.upi_id
+                                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                                    : 'bg-[#222] border-[#333] text-zinc-400 hover:text-white hover:border-zinc-500'
+                                }`}
+                                title="Copy UPI ID"
+                              >
+                                {copiedUpi === r.upi_id ? (
+                                  <Check className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                            {r.upi_name && (
+                              <div className="text-[10px] text-zinc-400 mt-0.5">
+                                Name: <span className="text-zinc-300">{r.upi_name}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Date */}
+                          <td className="py-3.5 px-4 text-zinc-400">
+                            <div>{formatDate(r.created_at)}</div>
+                            <div className="text-[10px] text-zinc-500">
+                              {formatRelativeTime(r.created_at)}
+                            </div>
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-3.5 px-4 text-center">
+                            {r.status === 'pending' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                                Pending Transfer
+                              </span>
+                            )}
+                            {r.status === 'approved' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Paid via UPI
+                              </span>
+                            )}
+                            {r.status === 'rejected' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/30">
+                                <XCircle className="w-3 h-3" />
+                                Declined & Refunded
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-3.5 px-4 text-right">
+                            {r.status === 'pending' ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={processingWithdrawalId === r.id}
+                                  onClick={() => {
+                                    setApprovingWithdrawal(r)
+                                    setApprovalUtrInput('')
+                                  }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {processingWithdrawalId === r.id ? (
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-3.5 w-3.5" />
+                                  )}
+                                  <span>Mark Paid</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={processingWithdrawalId === r.id}
+                                  onClick={() => {
+                                    setDecliningWithdrawal(r)
+                                    setWithdrawalDeclineReasonInput('Invalid UPI ID or payment declined by bank')
+                                  }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/25 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  <span>Decline</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-zinc-400 text-right">
+                                {r.admin_notes ? (
+                                  <span className="bg-[#121212] px-2 py-1 rounded border border-[#272727] text-zinc-300">
+                                    {r.admin_notes}
+                                  </span>
+                                ) : (
+                                  <span className="text-zinc-500 italic">Completed</span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* APPROVE WITHDRAWAL / MARK PAID MODAL */}
+      {/* ------------------------------------------------------------- */}
+      {approvingWithdrawal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#181818] border border-[#2e2e2e] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <Banknote className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Confirm UPI Payout</h4>
+                  <p className="text-xs text-zinc-400">
+                    To: <strong className="text-white">@{approvingWithdrawal.profiles?.username || 'streamer'}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setApprovingWithdrawal(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Payout Summary Details */}
+            <div className="p-3.5 bg-[#121212] border border-emerald-500/20 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-zinc-400">Amount to Send via UPI:</span>
+                <span className="text-lg font-black text-emerald-400">
+                  ₹{approvingWithdrawal.amount_inr}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                <span className="text-xs text-zinc-400">Coins Deducted:</span>
+                <span className="text-xs font-mono font-bold text-zinc-300">
+                  🪙 {approvingWithdrawal.coins}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                <span className="text-xs text-zinc-400">Streamer UPI ID:</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-mono font-bold text-white bg-zinc-800 px-2 py-0.5 rounded">
+                    {approvingWithdrawal.upi_id}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyUpiId(approvingWithdrawal.upi_id)}
+                    className="p-1 rounded bg-zinc-800 text-zinc-300 hover:text-white cursor-pointer"
+                    title="Copy UPI"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-zinc-300 block mb-1">
+                  Bank / UPI Transaction Reference (UTR Number)
+                </label>
+                <input
+                  type="text"
+                  value={approvalUtrInput}
+                  onChange={(e) => setApprovalUtrInput(e.target.value)}
+                  placeholder="e.g. 12-digit UTR from PhonePe, GPay, Paytm receipt"
+                  className="w-full bg-[#121212] border border-[#333] focus:border-emerald-500 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none font-mono"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  Recording the UTR reference provides proof of payout to the streamer.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setApprovingWithdrawal(null)}
+                  className="px-4 py-2 text-xs font-semibold bg-[#242424] hover:bg-[#2c2c2c] text-zinc-300 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={processingWithdrawalId === approvingWithdrawal.id}
+                  onClick={() => handleApproveWithdrawal(approvingWithdrawal.id, approvalUtrInput)}
+                  className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {processingWithdrawalId === approvingWithdrawal.id ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  <span>Confirm Payout Sent</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* DECLINE WITHDRAWAL MODAL (AUTOMATIC COIN REFUND) */}
+      {/* ------------------------------------------------------------- */}
+      {decliningWithdrawal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#181818] border border-[#2e2e2e] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-red-500/20 text-red-400">
+                  <XCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Decline Withdrawal Request</h4>
+                  <p className="text-xs text-zinc-400">
+                    Streamer: <strong className="text-white">@{decliningWithdrawal.profiles?.username || 'streamer'}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDecliningWithdrawal(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Refund Notice Banner */}
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 space-y-1">
+              <div className="font-bold flex items-center gap-1.5">
+                <Coins className="h-3.5 w-3.5 text-amber-400" />
+                <span>Automatic Wallet Refund:</span>
+              </div>
+              <p className="text-[11px] text-zinc-300">
+                Declining this request will immediately restore <strong>{decliningWithdrawal.coins} coins</strong> back to the streamer's coin balance.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-zinc-300 block mb-1">
+                  Reason for Decline
+                </label>
+                <input
+                  type="text"
+                  value={withdrawalDeclineReasonInput}
+                  onChange={(e) => setWithdrawalDeclineReasonInput(e.target.value)}
+                  placeholder="e.g. Invalid UPI ID or payment declined by bank"
+                  className="w-full bg-[#121212] border border-[#333] focus:border-red-500 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDecliningWithdrawal(null)}
+                  className="px-4 py-2 text-xs font-semibold bg-[#242424] hover:bg-[#2c2c2c] text-zinc-300 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={processingWithdrawalId === decliningWithdrawal.id}
+                  onClick={() => handleDeclineWithdrawal(decliningWithdrawal.id, withdrawalDeclineReasonInput)}
+                  className="px-4 py-2 text-xs font-bold bg-red-600 hover:bg-red-500 text-white rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-red-600/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {processingWithdrawalId === decliningWithdrawal.id ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <X className="h-3.5 w-3.5" />
+                  )}
+                  <span>Decline & Refund Coins</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* DECLINE TOP-UP MODAL */}

@@ -20,9 +20,11 @@ import {
   Upload,
   TrendingUp,
   Coins,
+  Banknote,
 } from 'lucide-react'
 import type { Profile, Video } from '@/types'
 import { getSupabaseBrowserClient, getPublicUrl } from '@/lib/supabase'
+import { WithdrawModal } from '@/components/wallet/WithdrawModal'
 
 interface ProfileClientProps {
   profile: Profile
@@ -42,6 +44,7 @@ export function ProfileClient({
   const [videos] = useState<Video[]>(initialVideos)
   const [streamerRevenue, setStreamerRevenue] = useState<number>(initialRevenue)
   const [isSubscribed, setIsSubscribed] = useState(false)
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false)
 
   // Synchronize / fetch verified streamer earnings
   useEffect(() => {
@@ -194,6 +197,17 @@ export function ProfileClient({
                     <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
                     <span>🪙 {streamerRevenue} Coins Earned</span>
                   </div>
+
+                  {isOwner && (
+                    <button
+                      onClick={() => setIsWithdrawOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-500/20 transition-all active:scale-95 cursor-pointer"
+                      title="Withdraw your earned coins to bank account via UPI"
+                    >
+                      <Banknote className="h-3.5 w-3.5" />
+                      <span>Withdraw Earnings</span>
+                    </button>
+                  )}
 
                   <div
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
@@ -372,6 +386,16 @@ export function ProfileClient({
             </form>
           </div>
         </div>
+      )}
+      {/* Streamer Withdrawal Modal */}
+      {isOwner && (
+        <WithdrawModal
+          isOpen={isWithdrawOpen}
+          onClose={() => setIsWithdrawOpen(false)}
+          onSuccess={() => {
+            refreshProfile()
+          }}
+        />
       )}
     </div>
   )

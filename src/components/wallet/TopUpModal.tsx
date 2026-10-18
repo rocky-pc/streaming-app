@@ -17,6 +17,7 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { WithdrawModal } from './WithdrawModal'
 
 interface TopUpPackage {
   coins: number
@@ -68,6 +69,7 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<'pay' | 'history'>('pay')
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false)
 
   // Calculate current INR amount based on chosen package or custom coins
   const calculatedInr = isCustomMode
@@ -259,11 +261,22 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
 
         {/* Current Wallet Balance Banner */}
         <div className="px-5 py-2.5 bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-transparent border-b border-[#262626] flex items-center justify-between text-xs">
-          <span className="text-zinc-400">Your Current Coin Balance:</span>
-          <div className="inline-flex items-center gap-1.5 font-bold text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 rounded-full">
-            <span>🪙</span>
-            <span>{profile?.coin_balance ?? 0} Coins</span>
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-400">Balance:</span>
+            <div className="inline-flex items-center gap-1.5 font-bold text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 rounded-full">
+              <span>🪙</span>
+              <span>{profile?.coin_balance ?? 0} Coins</span>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setIsWithdrawOpen(true)}
+            className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1 bg-emerald-950/40 hover:bg-emerald-900/50 px-2.5 py-1 rounded-full border border-emerald-500/30 cursor-pointer"
+          >
+            <span>Withdraw Earnings</span>
+            <ArrowRight className="w-3 h-3" />
+          </button>
         </div>
 
         {/* Body Container */}
@@ -545,6 +558,16 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
           )}
         </div>
       </div>
+
+      {/* Withdraw Modal if opened from top-up modal */}
+      <WithdrawModal
+        isOpen={isWithdrawOpen}
+        onClose={() => setIsWithdrawOpen(false)}
+        onSuccess={() => {
+          refreshProfile()
+          fetchTopupData()
+        }}
+      />
     </div>
   )
 }
