@@ -243,10 +243,15 @@ export function LiveChat({
       return
     }
 
-    const currentBalance = userCoins ?? profile?.coin_balance ?? 50
-    const requiredCoins = selectedPaidEmoji ? selectedPaidEmoji.cost : chatCost
+    const isHost = Boolean(
+      isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
+    )
 
-    if (requiredCoins > 0 && currentBalance < requiredCoins) {
+    const currentBalance = userCoins ?? profile?.coin_balance ?? 50
+    // Streamer / Host is NEVER charged for chatting in their own stream
+    const requiredCoins = isHost ? 0 : (selectedPaidEmoji ? selectedPaidEmoji.cost : chatCost)
+
+    if (!isHost && requiredCoins > 0 && currentBalance < requiredCoins) {
       setChatError(
         selectedPaidEmoji
           ? `Insufficient coins for ${selectedPaidEmoji.emoji}! Requires ${selectedPaidEmoji.cost} coins (Your balance: ${currentBalance}).`
@@ -355,8 +360,12 @@ export function LiveChat({
     }
   }
 
+  const isHost = Boolean(
+    isBroadcaster || (user && broadcasterId && user.id === broadcasterId)
+  )
+
   const currentBalance = userCoins ?? profile?.coin_balance ?? 50
-  const isBalanceInsufficient = chatCost > 0 && currentBalance < chatCost
+  const isBalanceInsufficient = !isHost && chatCost > 0 && currentBalance < chatCost
 
   return (
     <div
@@ -371,8 +380,16 @@ export function LiveChat({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Active Coin Economics Pill */}
-          {chatCost > 0 ? (
+          {/* Active Coin Economics Pill / Host Badge */}
+          {isHost ? (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold"
+              title="You are the host of this stream. Live chat is completely free for you!"
+            >
+              <Crown className="h-3 w-3 text-amber-400" />
+              <span>Host (Free Chat)</span>
+            </div>
+          ) : chatCost > 0 ? (
             <div
               className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold"
               title={`${chatCost} coins deducted per chat. ${streamerPercent}% to streamer.`}
@@ -580,7 +597,7 @@ export function LiveChat({
 
           <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
             {paidEmojis.map((item) => {
-              const canAfford = currentBalance >= item.cost
+              const canAfford = isHost || currentBalance >= item.cost
               return (
                 <button
                   key={item.emoji}
@@ -592,12 +609,18 @@ export function LiveChat({
                       ? 'bg-[#1f1f1f] hover:bg-[#282828] border-zinc-700 hover:border-amber-500/50 hover:scale-105 active:scale-95'
                       : 'bg-zinc-900/60 border-zinc-800 opacity-40 cursor-not-allowed'
                   }`}
-                  title={`${item.emoji} costs ${item.cost} coins`}
+                  title={isHost ? `${item.emoji} Free for Host` : `${item.emoji} costs ${item.cost} coins`}
                 >
                   <span className="text-2xl select-none mb-1">{item.emoji}</span>
                   <span className="text-[10px] font-bold text-amber-400 flex items-center gap-0.5">
-                    <span>🪙</span>
-                    <span>{item.cost}</span>
+                    {isHost ? (
+                      <span className="text-[9px] text-emerald-400 font-bold">FREE</span>
+                    ) : (
+                      <>
+                        <span>🪙</span>
+                        <span>{item.cost}</span>
+                      </>
+                    )}
                   </span>
                 </button>
               )
@@ -627,7 +650,7 @@ export function LiveChat({
                       ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
                       : 'bg-[#141414] hover:bg-[#242424] text-amber-400 border-[#303030]'
                   }`}
-                  title="Send Paid Super Emoji (Specific Emoji = Specific Coin cost)"
+                  title="Send Super Emoji"
                 >
                   <Sparkles className="h-4 w-4" />
                 </button>
@@ -639,6 +662,8 @@ export function LiveChat({
                   placeholder={
                     isBalanceInsufficient
                       ? `Insufficient coins (${currentBalance}/${chatCost} coins needed)`
+                      : isHost
+                      ? 'Chat with your viewers (Free for Host)...'
                       : 'Send a message or Super Emoji...'
                   }
                   value={inputText}
@@ -667,8 +692,12 @@ export function LiveChat({
                     <span>🪙</span>
                     <span>{currentBalance} coins</span>
                   </span>
-                  {chatCost > 0 && (
+                  {isHost ? (
+                    <span className="text-emerald-400 font-semibold">• Host (Free Chat)</span>
+                  ) : chatCost > 0 ? (
                     <span className="text-zinc-500">• {chatCost} coins / msg</span>
+                  ) : (
+                    <span className="text-emerald-400">• Free Chat</span>
                   )}
                 </div>
 

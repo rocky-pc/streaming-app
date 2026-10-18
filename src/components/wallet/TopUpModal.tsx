@@ -49,16 +49,18 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
   const [upiName, setUpiName] = useState('StreamFlow Official')
   const [coinPriceInr, setCoinPriceInr] = useState(1)
   const [packages, setPackages] = useState<TopUpPackage[]>([
-    { coins: 50, inr: 50, popular: false },
-    { coins: 100, inr: 100, popular: true },
-    { coins: 250, inr: 250, popular: false },
-    { coins: 500, inr: 500, popular: false },
-    { coins: 1000, inr: 950, popular: false },
+    { coins: 100, inr: 50, popular: false },
+    { coins: 250, inr: 100, popular: true },
+    { coins: 550, inr: 200, popular: false },
+    { coins: 1500, inr: 500, popular: false },
+    { coins: 3200, inr: 1000, popular: false },
   ])
   const [recentRequests, setRecentRequests] = useState<TopUpRequestItem[]>([])
 
   // Selection & Input state
   const [selectedCoins, setSelectedCoins] = useState<number>(100)
+  const [selectedInr, setSelectedInr] = useState<number>(50)
+  const [isCustomMode, setIsCustomMode] = useState<boolean>(false)
   const [customCoins, setCustomCoins] = useState<string>('100')
   const [utrNumber, setUtrNumber] = useState('')
   const [isCopied, setIsCopied] = useState(false)
@@ -67,14 +69,10 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<'pay' | 'history'>('pay')
 
-  // Calculate current INR amount
-  const calculatedInr = Math.max(
-    1,
-    Math.round(
-      (packages.find((p) => p.coins === selectedCoins)?.inr ??
-        (Number(customCoins) || 0) * coinPriceInr) * 100
-    ) / 100
-  )
+  // Calculate current INR amount based on chosen package or custom coins
+  const calculatedInr = isCustomMode
+    ? Math.max(1, Math.round((Number(customCoins) || 1) * coinPriceInr * 100) / 100)
+    : selectedInr
 
   // Fetch top-up settings and history
   const fetchTopupData = async () => {
@@ -88,6 +86,12 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
         if (typeof data.coinPriceInr === 'number') setCoinPriceInr(data.coinPriceInr)
         if (Array.isArray(data.packages) && data.packages.length > 0) {
           setPackages(data.packages)
+          // Default to popular package or 1st package declared by admin
+          const pop = data.packages.find((p: TopUpPackage) => p.popular) || data.packages[0]
+          setSelectedCoins(pop.coins)
+          setSelectedInr(pop.inr)
+          setCustomCoins(String(pop.coins))
+          setIsCustomMode(false)
         }
         if (Array.isArray(data.requests)) {
           setRecentRequests(data.requests)
@@ -116,9 +120,11 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
     setTimeout(() => setIsCopied(false), 2000)
   }
 
-  // Handle preset package selection
+  // Handle preset package selection (Declared / edited by Admin)
   const handleSelectPackage = (pkg: TopUpPackage) => {
+    setIsCustomMode(false)
     setSelectedCoins(pkg.coins)
+    setSelectedInr(pkg.inr)
     setCustomCoins(String(pkg.coins))
   }
 
@@ -127,7 +133,14 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
     setCustomCoins(val)
     const num = parseInt(val, 10)
     if (!isNaN(num) && num > 0) {
+      setIsCustomMode(true)
       setSelectedCoins(num)
+      const match = packages.find((p) => p.coins === num)
+      if (match) {
+        setSelectedInr(match.inr)
+      } else {
+        setSelectedInr(Math.max(1, Math.round(num * coinPriceInr * 100) / 100))
+      }
     }
   }
 
@@ -348,47 +361,74 @@ export function TopUpModal({ isOpen, onClose, onSuccess }: TopUpModalProps) {
               )}
 
               {/* STEP 1: Select Coin Package */}
-              <div className="space-y-2.5">
-                <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center justify-between">
-                  <span>1. Choose Coin Package</span>
-                  <span className="text-[11px] text-amber-400 lowercase font-normal">
-                    1 coin = ₹{coinPriceInr}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <Coins className="h-4 w-4 text-amber-400" />
+                    <span>1. Choose Coin Package</span>
+                  </label>
+                  <span className="text-[11px] text-amber-400 font-medium">
+                    Package options set by Admin
                   </span>
-                </label>
+                </div>
 
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   {packages.map((pkg) => {
-                    const isSelected = selectedCoins === pkg.coins
+                    const isSelected = !isCustomMode && selectedCoins === pkg.coins && selectedInr === pkg.inr
                     return (
                       <button
-                        key={pkg.coins}
+                        key={`${pkg.coins}-${pkg.inr}`}
                         type="button"
                         onClick={() => handleSelectPackage(pkg)}
-                        className={`relative p-2.5 rounded-2xl border text-center transition-all ${
+                        className={`relative p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-amber-500/20 border-amber-400 text-white shadow-md shadow-amber-500/20 ring-1 ring-amber-400'
-                            : 'bg-[#1a1a1a] border-[#2d2d2d] text-zinc-300 hover:border-[#404040] hover:bg-[#202020]'
+                            ? 'bg-gradient-to-br from-amber-500/25 via-amber-500/10 to-transparent border-amber-400 text-white shadow-lg shadow-amber-500/20 ring-2 ring-amber-400/50 scale-[1.02]'
+                            : 'bg-[#181818] border-[#2c2c2c] text-zinc-300 hover:border-[#444] hover:bg-[#202020]'
                         }`}
                       >
                         {pkg.popular && (
-                          <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.2 rounded-full bg-gradient-to-r from-red-500 to-amber-500 text-white font-extrabold text-[9px] uppercase tracking-wider shadow-xs">
-                            Popular
+                          <span className="absolute -top-2 right-2 px-2 py-0.2 rounded-full bg-gradient-to-r from-red-500 to-amber-500 text-white font-extrabold text-[9px] uppercase tracking-wider shadow-sm">
+                            POPULAR
                           </span>
                         )}
-                        <div className="font-extrabold text-sm text-amber-400">
-                          🪙 {pkg.coins}
+
+                        <div className="flex items-center justify-between">
+                          <div className="font-extrabold text-base text-amber-400 flex items-center gap-1.5">
+                            <span>🪙</span>
+                            <span>{pkg.coins} Coins</span>
+                          </div>
+                          {isSelected && (
+                            <span className="w-5 h-5 rounded-full bg-amber-400 text-black flex items-center justify-center shrink-0">
+                              <Check className="h-3 w-3 stroke-[3]" />
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[11px] text-zinc-400 font-semibold mt-0.5">
-                          ₹{pkg.inr}
+
+                        <div className="mt-2.5 pt-2 border-t border-white/5 flex items-center justify-between text-xs">
+                          <span className="text-zinc-400 text-[11px]">Cost:</span>
+                          <span className="font-black text-white text-sm bg-white/5 px-2 py-0.5 rounded-lg border border-white/10">
+                            ₹{pkg.inr} Rupees
+                          </span>
                         </div>
                       </button>
                     )
                   })}
                 </div>
 
+                {/* Selected Package Confirmation Banner */}
+                <div className="p-3 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-center justify-between text-xs text-amber-300 font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="h-4 w-4 text-amber-400 shrink-0" />
+                    <span>Chosen: <strong>🪙 {selectedCoins} Coins</strong> for <strong>₹{calculatedInr} Rupees</strong></span>
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-normal">
+                    {isCustomMode ? 'Custom Amount' : 'Admin Package'}
+                  </span>
+                </div>
+
                 {/* Custom Coins Input */}
                 <div className="flex items-center gap-2 pt-1">
-                  <div className="text-xs text-zinc-400 shrink-0">Or Enter Coins:</div>
+                  <div className="text-xs text-zinc-400 shrink-0">Or Custom Coins:</div>
                   <div className="relative flex-1">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm select-none">
                       🪙

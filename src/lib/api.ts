@@ -197,7 +197,23 @@ export async function getUserProfile(
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getUserStreamerRevenue(userId: string, customClient?: any): Promise<number> {
-  const client = getClient(customClient)
+  let client = customClient
+
+  if (!client) {
+    if (typeof window === 'undefined') {
+      try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://sahwiyxzktslxlmkldrt.supabase.co'
+        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhaHdpeXh6a3RzbHhsbWtsZHJ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA3MzYzMywiZXhwIjoyMTA3NjQ5NjMzfQ.En4Jl2jBL_XnLDp79y07DPblqh9M1asP_9AQ_GBCNLE'
+        const { createClient: createSupabaseClient } = await import('@supabase/supabase-js')
+        client = createSupabaseClient(supabaseUrl, supabaseServiceKey)
+      } catch {
+        client = getClient()
+      }
+    } else {
+      client = getClient()
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (client as any)
     .from('wallet_transactions')

@@ -25,10 +25,29 @@ export async function GET(request: Request) {
       settingsMap[s.key] = s.value
     }
 
+    let packages = [
+      { coins: 100, inr: 50, popular: false },
+      { coins: 250, inr: 100, popular: true },
+      { coins: 550, inr: 200, popular: false },
+      { coins: 1500, inr: 500, popular: false },
+      { coins: 3200, inr: 1000, popular: false },
+    ]
+    if (settingsMap['topup_packages']) {
+      try {
+        const parsed = JSON.parse(settingsMap['topup_packages'])
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          packages = parsed
+        }
+      } catch {
+        // use default
+      }
+    }
+
     const upiSettings = {
       admin_upi_id: settingsMap['admin_upi_id'] || 'streamflow@upi',
       admin_upi_name: settingsMap['admin_upi_name'] || 'StreamFlow Official',
       coin_price_inr: parseFloat(settingsMap['coin_price_inr'] || '1') || 1,
+      packages,
     }
 
     // 2. Query topup requests with user profile details
@@ -69,9 +88,37 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    const { action, requestId, reason, admin_upi_id, admin_upi_name, coin_price_inr } = body || {}
+    const { action, requestId, reason, admin_upi_id, admin_upi_name, coin_price_inr, packages } = body || {}
 
     const supabase = createAdminClient()
+
+    // -------------------------------------------------------------------------
+    // ACTION: UPDATE COIN PACKAGES (DECLARED / EDITED BY ADMIN)
+    // -------------------------------------------------------------------------
+    if (action === 'update_packages' || (action === 'update_settings' && Array.isArray(packages))) {
+      const incomingPackages = Array.isArray(packages) ? packages : []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const validPackages = incomingPackages.map((p: any) => ({
+        coins: Math.max(1, parseInt(p.coins, 10) || 0),
+        inr: Math.max(1, parseFloat(p.inr) || 0),
+        popular: Boolean(p.popular),
+      })).filter((p) => p.coins > 0 && p.inr > 0)
+
+      await supabase.from('platform_settings').upsert({
+        key: 'topup_packages',
+        value: JSON.stringify(validPackages),
+        description: 'Coin packages declared by admin (e.g. 50 rupees = 100 coins)',
+        updated_at: new Date().toISOString(),
+      })
+
+      if (action === 'update_packages') {
+        return NextResponse.json({
+          success: true,
+          message: `Saved ${validPackages.length} coin packages successfully!`,
+          packages: validPackages,
+        })
+      }
+    }
 
     // -------------------------------------------------------------------------
     // ACTION: UPDATE UPI & COIN EXCHANGE SETTINGS
@@ -104,7 +151,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         success: true,
-        message: `UPI Settings updated! UPI ID: ${upiId} • 1 Coin = ₹${coinRate} INR`,
+        message: `UPI Settings & Coin Packages updated! UPI ID: ${upiId} • 1 Coin = ₹${coinRate} INR`,
       })
     }
 

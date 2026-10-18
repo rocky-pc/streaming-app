@@ -187,10 +187,17 @@ interface AdminTopupRequest {
   } | null
 }
 
+export interface TopUpPackageItem {
+  coins: number
+  inr: number
+  popular?: boolean
+}
+
 interface AdminUpiSettings {
   admin_upi_id: string
   admin_upi_name: string
   coin_price_inr: number
+  packages?: TopUpPackageItem[]
 }
 
 type TabType = 'overview' | 'users' | 'streams' | 'videos' | 'chats' | 'topups' | 'settings'
@@ -232,6 +239,17 @@ export default function AdminPortalClient() {
     coin_price_inr: 1,
   })
   const [isSavingUpiSettings, setIsSavingUpiSettings] = useState(false)
+  const [packagesList, setPackagesList] = useState<TopUpPackageItem[]>([
+    { coins: 100, inr: 50, popular: false },
+    { coins: 250, inr: 100, popular: true },
+    { coins: 550, inr: 200, popular: false },
+    { coins: 1500, inr: 500, popular: false },
+    { coins: 3200, inr: 1000, popular: false },
+  ])
+  const [newPackageCoins, setNewPackageCoins] = useState<number>(100)
+  const [newPackageInr, setNewPackageInr] = useState<number>(50)
+  const [newPackagePopular, setNewPackagePopular] = useState<boolean>(false)
+  const [isSavingPackages, setIsSavingPackages] = useState(false)
   const [processingTopupId, setProcessingTopupId] = useState<string | null>(null)
   const [decliningRequest, setDecliningRequest] = useState<AdminTopupRequest | null>(null)
   const [declineReasonInput, setDeclineReasonInput] = useState('Payment verification failed / Invalid UTR')
@@ -413,6 +431,9 @@ export default function AdminPortalClient() {
         if (topupData.settings) {
           setUpiSettings(topupData.settings)
           setUpiForm(topupData.settings)
+          if (Array.isArray(topupData.settings.packages) && topupData.settings.packages.length > 0) {
+            setPackagesList(topupData.settings.packages)
+          }
         }
       }
     } catch (err) {
@@ -573,12 +594,13 @@ export default function AdminPortalClient() {
           admin_upi_id: upiForm.admin_upi_id,
           admin_upi_name: upiForm.admin_upi_name,
           coin_price_inr: upiForm.coin_price_inr,
+          packages: packagesList,
         }),
       })
       const data = await res.json()
       if (res.ok) {
         setUpiSettings(upiForm)
-        setActionNotice({ type: 'success', message: data.message || 'UPI Settings saved!' })
+        setActionNotice({ type: 'success', message: data.message || 'UPI Settings & Coin Packages saved!' })
       } else {
         setActionNotice({ type: 'error', message: data.error || 'Failed to save UPI settings' })
       }
@@ -587,6 +609,62 @@ export default function AdminPortalClient() {
     } finally {
       setIsSavingUpiSettings(false)
     }
+  }
+
+  // -------------------------------------------------------------
+  // COIN PACKAGES HANDLERS (DECLARED / EDITED BY ADMIN)
+  // -------------------------------------------------------------
+  const handleSavePackages = async (packagesToSave: TopUpPackageItem[]) => {
+    setIsSavingPackages(true)
+    try {
+      const res = await fetch('/api/admin/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_packages',
+          packages: packagesToSave,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setPackagesList(packagesToSave)
+        setActionNotice({ type: 'success', message: 'Coin packages saved and live for all users!' })
+      } else {
+        setActionNotice({ type: 'error', message: data.error || 'Failed to save coin packages' })
+      }
+    } catch {
+      setActionNotice({ type: 'error', message: 'Failed to save coin packages' })
+    } finally {
+      setIsSavingPackages(false)
+    }
+  }
+
+  const handleAddPackage = () => {
+    if (newPackageCoins <= 0 || newPackageInr <= 0) {
+      setActionNotice({ type: 'error', message: 'Coins and Rupees must both be greater than 0' })
+      return
+    }
+    const updated = [
+      ...packagesList,
+      { coins: newPackageCoins, inr: newPackageInr, popular: newPackagePopular },
+    ].sort((a, b) => a.inr - b.inr)
+    setPackagesList(updated)
+    handleSavePackages(updated)
+    setNewPackageCoins(100)
+    setNewPackageInr(50)
+    setNewPackagePopular(false)
+  }
+
+  const handleDeletePackage = (index: number) => {
+    const updated = packagesList.filter((_, i) => i !== index)
+    setPackagesList(updated)
+    handleSavePackages(updated)
+  }
+
+  const handleTogglePopular = (index: number) => {
+    const updated = packagesList.map((p, i) => (i === index ? { ...p, popular: !p.popular } : p))
+    setPackagesList(updated)
+    handleSavePackages(updated)
   }
 
   const handleApproveTopup = async (requestId: string) => {
@@ -2613,6 +2691,223 @@ export default function AdminPortalClient() {
                 </div>
               </div>
             </form>
+
+            {/* ------------------------------------------------------------- */}
+            {/* COIN TOP-UP PACKAGES (DECLARED & EDITED BY ADMIN) */}
+            {/* ------------------------------------------------------------- */}
+            <div className="bg-[#181818] border border-[#272727] rounded-2xl p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#272727]">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Coins className="h-5 w-5 text-amber-400" />
+                    <span>Coin Top-Up Packages (Declared by Admin)</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    Declare and edit package options for user screen top-up (e.g. 50 rupees = 100 coins). Users choose these packages when topping up.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaults = [
+                        { coins: 100, inr: 50, popular: false },
+                        { coins: 250, inr: 100, popular: true },
+                        { coins: 550, inr: 200, popular: false },
+                        { coins: 1500, inr: 500, popular: false },
+                        { coins: 3200, inr: 1000, popular: false },
+                      ]
+                      setPackagesList(defaults)
+                      handleSavePackages(defaults)
+                    }}
+                    className="text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-xl border border-zinc-700 bg-zinc-800/50 transition-colors"
+                  >
+                    Reset Defaults
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSavingPackages}
+                    onClick={() => handleSavePackages(packagesList)}
+                    className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-black font-extrabold text-xs rounded-xl shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center gap-1.5 transition-all"
+                  >
+                    {isSavingPackages ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Saving Packages...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-4 w-4" />
+                        <span>Save All Packages</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Add New Package Form */}
+              <div className="bg-[#121212] border border-[#2d2d2d] rounded-2xl p-4 space-y-3">
+                <div className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <Plus className="h-4 w-4 text-amber-400" />
+                  <span>Declare New Coin Package</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Rupees (₹ Price)</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">₹</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={newPackageInr}
+                        onChange={(e) => setNewPackageInr(Math.max(1, parseFloat(e.target.value) || 0))}
+                        placeholder="e.g. 50"
+                        className="w-full bg-[#181818] border border-[#333] focus:border-amber-400 rounded-xl pl-8 pr-3 py-2 text-xs font-bold text-white focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Coins Awarded</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs">🪙</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={newPackageCoins}
+                        onChange={(e) => setNewPackageCoins(Math.max(1, parseInt(e.target.value, 10) || 0))}
+                        placeholder="e.g. 100"
+                        className="w-full bg-[#181818] border border-[#333] focus:border-amber-400 rounded-xl pl-8 pr-3 py-2 text-xs font-bold text-white focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-end">
+                    <label className="flex items-center gap-2 cursor-pointer bg-[#181818] border border-[#333] rounded-xl px-3 py-2 hover:border-[#444] transition-colors h-[38px]">
+                      <input
+                        type="checkbox"
+                        checked={newPackagePopular}
+                        onChange={(e) => setNewPackagePopular(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400"
+                      />
+                      <span className="text-xs font-medium text-zinc-300">Mark as Popular</span>
+                    </label>
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleAddPackage}
+                      className="w-full h-[38px] bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-md"
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span>Declare (₹{newPackageInr} = 🪙 {newPackageCoins})</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Declared Packages List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold uppercase tracking-wider">
+                  <span>Declared Packages ({packagesList.length})</span>
+                  <span className="text-[11px] text-zinc-500 lowercase font-normal">edit rupees / coins directly below or toggle popular</span>
+                </div>
+
+                {packagesList.length === 0 ? (
+                  <div className="text-center py-8 bg-[#121212] border border-[#2b2b2b] rounded-2xl text-zinc-500 text-xs">
+                    No packages declared yet. Use the form above to add a package (e.g. ₹50 = 100 Coins).
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {packagesList.map((pkg, idx) => (
+                      <div
+                        key={`${pkg.coins}-${pkg.inr}-${idx}`}
+                        className="p-3.5 bg-[#121212] border border-[#2b2b2b] hover:border-[#3d3d3d] rounded-2xl flex items-center justify-between gap-3 group transition-all"
+                      >
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-amber-400 text-sm">
+                              🪙 {pkg.coins} Coins
+                            </span>
+                            <span className="text-zinc-500">=</span>
+                            <span className="font-bold text-white text-sm">₹{pkg.inr}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePopular(idx)}
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold transition-colors ${
+                                pkg.popular
+                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  : 'bg-zinc-800 text-zinc-500 border border-zinc-700 hover:text-zinc-300'
+                              }`}
+                            >
+                              {pkg.popular ? '★ POPULAR' : '+ Mark Popular'}
+                            </button>
+                            <span className="text-zinc-500 font-mono text-[10px]">
+                              (₹{(pkg.inr / pkg.coins).toFixed(2)}/coin)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Inline Edit Inputs */}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-zinc-500">₹</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={pkg.inr}
+                                onChange={(e) => {
+                                  const newInr = Math.max(1, parseFloat(e.target.value) || 0)
+                                  const updated = packagesList.map((p, i) =>
+                                    i === idx ? { ...p, inr: newInr } : p
+                                  )
+                                  setPackagesList(updated)
+                                }}
+                                title="Edit INR price"
+                                className="w-16 bg-[#1a1a1a] border border-[#333] focus:border-amber-400 rounded-lg px-2 py-1 text-xs text-white font-bold text-center"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-zinc-500">🪙</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={pkg.coins}
+                                onChange={(e) => {
+                                  const newCoins = Math.max(1, parseInt(e.target.value, 10) || 0)
+                                  const updated = packagesList.map((p, i) =>
+                                    i === idx ? { ...p, coins: newCoins } : p
+                                  )
+                                  setPackagesList(updated)
+                                }}
+                                title="Edit Coin amount"
+                                className="w-16 bg-[#1a1a1a] border border-[#333] focus:border-amber-400 rounded-lg px-2 py-1 text-xs text-amber-400 font-bold text-center"
+                              />
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePackage(idx)}
+                            className="w-7 h-7 rounded-lg bg-zinc-800/80 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 flex items-center justify-center transition-colors"
+                            title="Delete package"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* Filter and Search Bar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#181818] border border-[#272727] p-4 rounded-2xl">

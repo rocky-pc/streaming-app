@@ -213,6 +213,30 @@ export async function POST(request: NextRequest) {
       finalCost = Math.max(0, parseInt(emojiCost, 10) || 5)
     }
 
+    // Check if the sender is the host / streamer of this stream
+    let isStreamHost = false
+    let hostUserId: string | null = null
+
+    if (streamId !== 'test') {
+      const { data: streamData } = await supabaseService
+        .from('live_streams')
+        .select('user_id, title')
+        .eq('id', streamId)
+        .single()
+
+      if (streamData) {
+        hostUserId = streamData.user_id
+        if (streamData.user_id === user.id) {
+          isStreamHost = true
+        }
+      }
+    }
+
+    // CRITICAL: Host / Streamer is NEVER charged coins for their own live stream chat
+    if (isStreamHost) {
+      finalCost = 0
+    }
+
     const currentCoins = senderProfile?.coin_balance ?? 50
     let remainingCoins = currentCoins
 
@@ -225,7 +249,7 @@ export async function POST(request: NextRequest) {
         message: cleanMessage,
         created_at: new Date().toISOString(),
         paidEmoji: validPaidEmoji,
-        coinsPaid: finalCost,
+        coinsPaid: isStreamHost ? 0 : finalCost,
         profiles: {
           id: user.id,
           username: senderProfile?.username || user.user_metadata?.username || 'user',
@@ -233,11 +257,11 @@ export async function POST(request: NextRequest) {
           avatar_url: user.user_metadata?.avatar_url || null,
         },
       }
-      return NextResponse.json({ message: mockMsg, remainingCoins, coinsPaid: finalCost, paidEmoji: validPaidEmoji }, { status: 201 })
+      return NextResponse.json({ message: mockMsg, remainingCoins, coinsPaid: isStreamHost ? 0 : finalCost, paidEmoji: validPaidEmoji }, { status: 201 })
     }
 
-    // 3. Process coin deduction if cost > 0
-    if (finalCost > 0) {
+    // 3. Process coin deduction for viewers if cost > 0 (Never charge streamer)
+    if (!isStreamHost && finalCost > 0) {
       if (currentCoins < finalCost) {
         return NextResponse.json(
           {
@@ -270,13 +294,7 @@ export async function POST(request: NextRequest) {
 
       // 4. Distribute percentage revenue share to streamer
       try {
-        const { data: streamData } = await supabaseService
-          .from('live_streams')
-          .select('user_id, title')
-          .eq('id', streamId)
-          .single()
-
-        if (streamData && streamData.user_id && streamData.user_id !== user.id) {
+        if (hostUserId && hostUserId !== user.id) {
           const streamerEarnings = Math.floor(finalCost * (streamerPercent / 100))
 
           if (streamerEarnings > 0) {

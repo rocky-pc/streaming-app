@@ -45,12 +45,31 @@ export async function GET(request: Request) {
       }
     }
 
+    let packages = [
+      { coins: 100, inr: 50, popular: false },
+      { coins: 250, inr: 100, popular: true },
+      { coins: 550, inr: 200, popular: false },
+      { coins: 1500, inr: 500, popular: false },
+      { coins: 3200, inr: 1000, popular: false },
+    ]
+    if (settingsMap['topup_packages']) {
+      try {
+        const parsed = JSON.parse(settingsMap['topup_packages'])
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          packages = parsed
+        }
+      } catch {
+        // default
+      }
+    }
+
     return NextResponse.json({
       settings: {
         signup_coin_bonus: parseInt(settingsMap['signup_coin_bonus'] || '50', 10),
         chat_cost_per_message: parseInt(settingsMap['chat_cost_per_message'] || '2', 10),
         streamer_revenue_percent: parseInt(settingsMap['streamer_revenue_percent'] || '70', 10),
         paid_chat_emojis: paidEmojis,
+        topup_packages: packages,
       },
       raw: settings || [],
     })
@@ -68,7 +87,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    const { signup_coin_bonus, chat_cost_per_message, streamer_revenue_percent, paid_chat_emojis } = body || {}
+    const { signup_coin_bonus, chat_cost_per_message, streamer_revenue_percent, paid_chat_emojis, topup_packages } = body || {}
 
     const supabase = createAdminClient()
     const upserts = []
@@ -106,6 +125,24 @@ export async function POST(request: Request) {
         key: 'paid_chat_emojis',
         value: JSON.stringify(paid_chat_emojis),
         description: 'Specific coin costs for live stream chat paid emojis',
+        updated_at: new Date().toISOString(),
+      })
+    }
+
+    if (Array.isArray(topup_packages)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const validPackages = topup_packages
+        .map((p: any) => ({
+          coins: Math.max(1, parseInt(p.coins, 10) || 0),
+          inr: Math.max(1, parseFloat(p.inr) || 0),
+          popular: Boolean(p.popular),
+        }))
+        .filter((p) => p.coins > 0 && p.inr > 0)
+
+      upserts.push({
+        key: 'topup_packages',
+        value: JSON.stringify(validPackages),
+        description: 'Coin packages declared by admin (e.g. 50 rupees = 100 coins)',
         updated_at: new Date().toISOString(),
       })
     }

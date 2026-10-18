@@ -552,6 +552,7 @@ export function LivePlayerClient({ initialStream, streamId }: LivePlayerClientPr
             streamId={streamId}
             room={roomRef.current}
             broadcasterId={stream?.user_id || ''}
+            isBroadcaster={Boolean(user && stream && user.id === stream.user_id)}
             className="h-[520px]"
           />
 

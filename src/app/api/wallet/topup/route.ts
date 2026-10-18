@@ -10,11 +10,11 @@ function getServiceRoleClient() {
 }
 
 const DEFAULT_PACKAGES = [
-  { coins: 50, inr: 50, popular: false },
-  { coins: 100, inr: 100, popular: true },
-  { coins: 250, inr: 250, popular: false },
-  { coins: 500, inr: 500, popular: false },
-  { coins: 1000, inr: 950, popular: false },
+  { coins: 100, inr: 50, popular: false },
+  { coins: 250, inr: 100, popular: true },
+  { coins: 550, inr: 200, popular: false },
+  { coins: 1500, inr: 500, popular: false },
+  { coins: 3200, inr: 1000, popular: false },
 ]
 
 export async function GET() {

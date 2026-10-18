@@ -33,14 +33,42 @@ interface ProfileClientProps {
 export function ProfileClient({
   profile: initialProfile,
   initialVideos,
-  streamerRevenue = 0,
+  streamerRevenue: initialRevenue = 0,
 }: ProfileClientProps) {
   const { user, refreshProfile } = useAuth()
   const { toast } = useToast()
 
   const [profile, setProfile] = useState<Profile>(initialProfile)
   const [videos] = useState<Video[]>(initialVideos)
+  const [streamerRevenue, setStreamerRevenue] = useState<number>(initialRevenue)
   const [isSubscribed, setIsSubscribed] = useState(false)
+
+  // Synchronize / fetch verified streamer earnings
+  useEffect(() => {
+    let isMounted = true
+    const fetchEarnings = async () => {
+      try {
+        const res = await fetch(`/api/profile?userId=${profile.id}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (isMounted) {
+            if (typeof data.streamerRevenue === 'number') {
+              setStreamerRevenue(data.streamerRevenue)
+            }
+            if (data.profile) {
+              setProfile((prev) => ({ ...prev, ...data.profile }))
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load profile earnings:', err)
+      }
+    }
+    fetchEarnings()
+    return () => {
+      isMounted = false
+    }
+  }, [profile.id])
 
   // Edit Profile Modal
   const [isEditing, setIsEditing] = useState(false)
@@ -162,9 +190,9 @@ export function ProfileClient({
                   </div>
 
                   {/* Streamer Revenue Badge */}
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs shadow-sm" title="Total coins earned from live streams and chat super emojis">
-                    <TrendingUp className="h-3.5 w-3.5" />
-                    <span>{streamerRevenue} Coins Earned</span>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs shadow-sm" title="Total lifetime coins earned from live streams and chat super emojis">
+                    <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>🪙 {streamerRevenue} Coins Earned</span>
                   </div>
 
                   <div
