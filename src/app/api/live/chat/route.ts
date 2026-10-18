@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
             const { data: streamerProfile } = await supabaseService
               .from('profiles')
               .select('coin_balance')
-              .eq('id', streamData.user_id)
+              .eq('id', hostUserId)
               .single()
 
             const currentStreamerCoins = streamerProfile?.coin_balance ?? 0
@@ -310,10 +310,10 @@ export async function POST(request: NextRequest) {
             await supabaseService
               .from('profiles')
               .update({ coin_balance: newStreamerCoins })
-              .eq('id', streamData.user_id)
+              .eq('id', hostUserId)
 
             await supabaseService.from('wallet_transactions').insert({
-              user_id: streamData.user_id,
+              user_id: hostUserId,
               amount: streamerEarnings,
               type: 'streamer_earning',
               related_stream_id: streamId,
