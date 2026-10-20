@@ -947,6 +947,42 @@ export default function AdminPortalClient() {
     }
   }
 
+  const handleSelectWithdrawalSource = async (source: 'earned_only' | 'deposited_only' | 'both') => {
+    // 1. Instantly update form and settings state so UI selection updates immediately with zero lag
+    setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: source }))
+    setWithdrawalSettings((prev) => ({ ...prev, withdrawal_allowed_source: source }))
+
+    // 2. Persist immediately to backend platform_settings
+    try {
+      const res = await fetch('/api/admin/withdrawals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_settings',
+          streamer_payout_rate_coins: Number(withdrawalForm.streamer_payout_rate_coins),
+          streamer_payout_rate_inr: Number(withdrawalForm.streamer_payout_rate_inr),
+          min_withdrawal_inr: Number(withdrawalForm.min_withdrawal_inr),
+          withdrawal_allowed_source: source,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        const sourceLabel =
+          source === 'earned_only'
+            ? '🪙 Earned Coins Only'
+            : source === 'deposited_only'
+            ? '💳 Deposited Coins Only'
+            : '⚡ Both / All Coins'
+        setActionNotice({
+          type: 'success',
+          message: `Policy switched to: ${sourceLabel}`,
+        })
+      }
+    } catch {
+      // Local state remains updated
+    }
+  }
+
   const handleApproveWithdrawal = async (requestId: string, utr?: string) => {
     setProcessingWithdrawalId(requestId)
     try {
@@ -3680,9 +3716,9 @@ export default function AdminPortalClient() {
                   <br />
                   Allowed Source:{' '}
                   <strong className="text-emerald-400">
-                    {withdrawalSettings.withdrawal_allowed_source === 'earned_only'
+                    {(withdrawalForm.withdrawal_allowed_source || withdrawalSettings.withdrawal_allowed_source) === 'earned_only'
                       ? '🪙 Earned Coins Only'
-                      : withdrawalSettings.withdrawal_allowed_source === 'deposited_only'
+                      : (withdrawalForm.withdrawal_allowed_source || withdrawalSettings.withdrawal_allowed_source) === 'deposited_only'
                       ? '💳 Deposited Coins Only'
                       : '⚡ Both / All Coins'}
                   </strong>
@@ -3806,112 +3842,142 @@ export default function AdminPortalClient() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* Option 1: Earned Coins Only */}
-                  <div
-                    onClick={() =>
-                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'earned_only' }))
-                    }
-                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                      (withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only'
-                        ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/40 text-white'
-                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl">🪙</span>
-                        <div>
-                          <div className="text-xs font-bold text-white">Earned Coins Only</div>
-                          <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">Streamer Earnings Only</div>
-                        </div>
-                      </div>
-                      <div
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                          (withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only'
-                            ? 'border-emerald-500 bg-emerald-500'
-                            : 'border-zinc-600'
+                  {(() => {
+                    const activeSource = withdrawalForm.withdrawal_allowed_source || withdrawalSettings.withdrawal_allowed_source || 'both'
+                    const isSelected = activeSource === 'earned_only'
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectWithdrawalSource('earned_only')}
+                        className={`group p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-500/10 text-white scale-[1.01]'
+                            : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-emerald-500/50 hover:bg-[#181818] hover:text-zinc-200'
                         }`}
                       >
-                        {(withdrawalForm.withdrawal_allowed_source || 'both') === 'earned_only' && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-black" />
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
-                      Only coins earned via stream chat tips, stickers, gifts, and private messages can be cashed out. Top-up deposits are locked to spending.
-                    </p>
-                  </div>
+                        <div className="flex items-start justify-between gap-2 w-full">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl p-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">🪙</span>
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>Earned Coins Only</span>
+                                {isSelected && (
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-extrabold bg-emerald-500 text-black uppercase tracking-wider">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">Streamer Earnings Mode</div>
+                            </div>
+                          </div>
+                          <div
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                              isSelected
+                                ? 'border-emerald-400 bg-emerald-500 shadow-sm shadow-emerald-500/50'
+                                : 'border-zinc-600 bg-transparent group-hover:border-emerald-400/70'
+                            }`}
+                          >
+                            {isSelected && <div className="w-2 h-2 rounded-full bg-white shadow-xs" />}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 group-hover:text-zinc-300 mt-3 leading-relaxed">
+                          Only coins earned via stream chat tips, stickers, gifts, and private messages can be cashed out. Top-up deposits cannot be withdrawn.
+                        </p>
+                      </button>
+                    )
+                  })()}
 
                   {/* Option 2: Deposited Coins Only */}
-                  <div
-                    onClick={() =>
-                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'deposited_only' }))
-                    }
-                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                      withdrawalForm.withdrawal_allowed_source === 'deposited_only'
-                        ? 'bg-blue-500/10 border-blue-500 ring-1 ring-blue-500/40 text-white'
-                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl">💳</span>
-                        <div>
-                          <div className="text-xs font-bold text-white">Deposited Coins Only</div>
-                          <div className="text-[10px] text-blue-400 font-semibold mt-0.5">Deposit Refund Mode</div>
-                        </div>
-                      </div>
-                      <div
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                          withdrawalForm.withdrawal_allowed_source === 'deposited_only'
-                            ? 'border-blue-500 bg-blue-500'
-                            : 'border-zinc-600'
+                  {(() => {
+                    const activeSource = withdrawalForm.withdrawal_allowed_source || withdrawalSettings.withdrawal_allowed_source || 'both'
+                    const isSelected = activeSource === 'deposited_only'
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectWithdrawalSource('deposited_only')}
+                        className={`group p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-blue-500/15 border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/10 text-white scale-[1.01]'
+                            : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-blue-500/50 hover:bg-[#181818] hover:text-zinc-200'
                         }`}
                       >
-                        {withdrawalForm.withdrawal_allowed_source === 'deposited_only' && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
-                      Users can only withdraw / refund coins purchased through UPI top-up packages. Streamer chat and tip earnings are excluded.
-                    </p>
-                  </div>
+                        <div className="flex items-start justify-between gap-2 w-full">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl p-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20">💳</span>
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>Deposited Coins Only</span>
+                                {isSelected && (
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-extrabold bg-blue-500 text-white uppercase tracking-wider">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-blue-400 font-semibold mt-0.5">Deposit Refund Mode</div>
+                            </div>
+                          </div>
+                          <div
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                              isSelected
+                                ? 'border-blue-400 bg-blue-500 shadow-sm shadow-blue-500/50'
+                                : 'border-zinc-600 bg-transparent group-hover:border-blue-400/70'
+                            }`}
+                          >
+                            {isSelected && <div className="w-2 h-2 rounded-full bg-white shadow-xs" />}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 group-hover:text-zinc-300 mt-3 leading-relaxed">
+                          Users can only withdraw / refund coins purchased through UPI top-up packages. Streamer chat and gift earnings are excluded.
+                        </p>
+                      </button>
+                    )
+                  })()}
 
                   {/* Option 3: Both / All Coins */}
-                  <div
-                    onClick={() =>
-                      setWithdrawalForm((prev) => ({ ...prev, withdrawal_allowed_source: 'both' }))
-                    }
-                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                      (withdrawalForm.withdrawal_allowed_source || 'both') === 'both'
-                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/40 text-white'
-                        : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl">⚡</span>
-                        <div>
-                          <div className="text-xs font-bold text-white">Both / All Coins</div>
-                          <div className="text-[10px] text-purple-400 font-semibold mt-0.5">Universal Payout Mode</div>
-                        </div>
-                      </div>
-                      <div
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                          (withdrawalForm.withdrawal_allowed_source || 'both') === 'both'
-                            ? 'border-purple-500 bg-purple-500'
-                            : 'border-zinc-600'
+                  {(() => {
+                    const activeSource = withdrawalForm.withdrawal_allowed_source || withdrawalSettings.withdrawal_allowed_source || 'both'
+                    const isSelected = activeSource === 'both'
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectWithdrawalSource('both')}
+                        className={`group p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-purple-500/15 border-purple-500 ring-2 ring-purple-500/40 shadow-lg shadow-purple-500/10 text-white scale-[1.01]'
+                            : 'bg-[#121212] border-[#2c2c2c] text-zinc-400 hover:border-purple-500/50 hover:bg-[#181818] hover:text-zinc-200'
                         }`}
                       >
-                        {(withdrawalForm.withdrawal_allowed_source || 'both') === 'both' && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 mt-2.5 leading-relaxed">
-                      Open withdrawal policy. Users and streamers can cash out their entire wallet balance regardless of whether coins were earned or deposited.
-                    </p>
-                  </div>
+                        <div className="flex items-start justify-between gap-2 w-full">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl p-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20">⚡</span>
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>Both / All Coins</span>
+                                {isSelected && (
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-extrabold bg-purple-500 text-white uppercase tracking-wider">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-purple-400 font-semibold mt-0.5">Universal Payout Mode</div>
+                            </div>
+                          </div>
+                          <div
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                              isSelected
+                                ? 'border-purple-400 bg-purple-500 shadow-sm shadow-purple-500/50'
+                                : 'border-zinc-600 bg-transparent group-hover:border-purple-400/70'
+                            }`}
+                          >
+                            {isSelected && <div className="w-2 h-2 rounded-full bg-white shadow-xs" />}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 group-hover:text-zinc-300 mt-3 leading-relaxed">
+                          Open withdrawal policy. Users and streamers can cash out their entire wallet balance regardless of how coins were acquired.
+                        </p>
+                      </button>
+                    )
+                  })()}
                 </div>
               </div>
 

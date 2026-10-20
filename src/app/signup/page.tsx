@@ -49,30 +49,41 @@ export default function SignUpPage() {
     setIsLoading(true)
 
     try {
-      const supabase = getSupabaseBrowserClient()
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            username: cleanUsername,
-            display_name: displayName.trim() || cleanUsername,
-          },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
+      // 1. Call custom signup endpoint that auto-confirms email and avoids email rate limit
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+          username: cleanUsername,
+          displayName: displayName.trim() || cleanUsername,
+        }),
       })
 
-      if (signUpError) {
-        throw new Error(signUpError.message)
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create account.')
       }
 
-      if (data.session) {
-        window.location.href = '/'
-      } else {
-        setSuccessMessage(
-          'Registration successful! Please check your email inbox to verify your account before logging in.'
-        )
+      setSuccessMessage('Account created successfully! Logging you in...')
+
+      // 2. Immediately sign in without requiring email confirmation
+      const supabase = getSupabaseBrowserClient()
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      })
+
+      if (signInErr) {
+        // Fallback: If signin encounters any client issue, redirect to login page
+        router.push('/login?registered=true')
+        return
       }
+
+      // 3. Successfully signed in -> redirect to home page
+      window.location.href = '/'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create account. Please try again.')
     } finally {

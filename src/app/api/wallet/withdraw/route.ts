@@ -395,6 +395,11 @@ export async function POST(request: NextRequest) {
       const { error: insErr } = await supabaseService.from('withdrawal_requests').insert(newRequest)
       if (!insErr) {
         insertedInTable = true
+      } else {
+        // If column withdrawal_source is not yet added in table, insert without it
+        const { withdrawal_source: _unused, ...basicRequest } = newRequest
+        const { error: retryErr } = await supabaseService.from('withdrawal_requests').insert(basicRequest)
+        if (!retryErr) insertedInTable = true
       }
     } catch {
       // Table doesn't exist yet, use fallback
